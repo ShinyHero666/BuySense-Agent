@@ -1,0 +1,22 @@
+{
+  "benchmark": "buysense-java-decision-v1",
+  "generated_at": "2026-08-16T09:19:40.839990800Z",
+  "domain_pack": "normal-3c-v1",
+  "local_products": 14,
+  "local_spus": 13,
+  "unique_queries": 120,
+  "warmup_rounds": 5,
+  "measured_rounds": 20,
+  "measured_runs": 2400,
+  "non_empty_result_rate": 1.0,
+  "category_violations": 0,
+  "budget_violations": 0,
+  "ad_policy_violations": 0,
+  "latency_p50_ms": 0.097,
+  "latency_p95_ms": 0.232,
+  "latency_max_ms": 0.879,
+  "latency_scope": "IntentParser plus in-memory Java DecisionEngine; excludes LLM, network and database I/O",
+  "java_version": "17.0.17",
+  "os": "Windows 11 amd64",
+  "available_processors": 16
+}
