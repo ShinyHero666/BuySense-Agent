@@ -1,26 +1,50 @@
-import { useMemo, useState } from "react";
-import type { AgentRun, MetricSnapshot, RunEvent } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import type { AgentRun, DomainPackSummary, MetricSnapshot, RunEvent } from "../types";
 import { Chart } from "../components/Chart";
 import type { EChartsOption } from "echarts";
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   { label: "套装决策", message: "总预算7000元，重视拍照和续航，选手机并搭配降噪耳机和充电器" },
   { label: "无广告单品", message: "预算5000元，不要广告，推荐一台适合游戏和拍照的手机" },
   { label: "通勤耳机", message: "预算1800元，推荐通勤降噪耳机，重视音质和佩戴舒适" },
 ];
 
+function exampleLabel(pack: DomainPackSummary, index: number): string {
+  if (pack.id === "normal-3c-v1" && DEFAULT_SUGGESTIONS[index]) {
+    return DEFAULT_SUGGESTIONS[index].label;
+  }
+  return `示例 ${String(index + 1).padStart(2, "0")}`;
+}
+
 export function DecisionView(props: {
   run: AgentRun | null;
   events: RunEvent[];
   metrics: MetricSnapshot | null;
+  domainPacks: DomainPackSummary[];
+  selectedDomainPackId: string;
   busy: boolean;
+  onDomainPack: (domainPackId: string) => void;
   onSubmit: (message: string, confirmed?: boolean) => void;
   onCancel: () => void;
 }) {
-  const [message, setMessage] = useState(SUGGESTIONS[0].message);
+  const [message, setMessage] = useState(DEFAULT_SUGGESTIONS[0].message);
+  const selectedPack = props.domainPacks.find((pack) => pack.id === props.selectedDomainPackId);
+  const runPack = props.domainPacks.find((pack) => pack.id === props.run?.domainPackId);
+  const suggestions = selectedPack?.exampleQueries.map((query, index) => ({
+    label: exampleLabel(selectedPack, index),
+    message: query,
+  })) ?? [];
   const reply = props.run?.result;
   const decision = reply?.decision;
+  const retryableConfirmation = Boolean(
+    props.run?.confirmed &&
+    props.run.proposalRunId &&
+    (props.run.status === "failed" || props.run.status === "cancelled"),
+  );
   const hasNorthStar = (props.metrics?.northStar.denominator ?? 0) > 0;
+  useEffect(() => {
+    setMessage(selectedPack?.exampleQueries[0] ?? "");
+  }, [selectedPack?.id]);
   const retrievedCandidateCount = useMemo(() => {
     const firstResultByChannel = new Map<string, number>();
     for (const event of props.events) {
@@ -74,21 +98,43 @@ export function DecisionView(props: {
       <section className="command-deck">
         <div className="command-index">ASK<br /><b>01</b></div>
         <div className="command-input">
+          <div className="pack-selector">
+            <div>
+              <label htmlFor="domain-pack">DOMAIN PACK / 领域包</label>
+              <select
+                id="domain-pack"
+                value={props.selectedDomainPackId}
+                disabled={props.busy || props.domainPacks.length === 0}
+                onChange={(event) => props.onDomainPack(event.target.value)}
+              >
+                {props.domainPacks.length === 0 && <option value="">领域包不可用</option>}
+                {props.domainPacks.map((pack) => (
+                  <option key={pack.id} value={pack.id}>{pack.displayName}</option>
+                ))}
+              </select>
+            </div>
+            <p>{selectedPack?.description ?? "正在读取领域包注册表…"}</p>
+            {selectedPack && <small>
+              {selectedPack.workflowId} · {selectedPack.capabilityProfileId} · {selectedPack.categories.map((item) => item.label).join(" / ")}
+            </small>}
+          </div>
           <label htmlFor="demand">描述购买目标、预算与偏好</label>
           <textarea id="demand" value={message} onChange={(event) => setMessage(event.target.value)} />
           <div className="suggestion-row">
-            {SUGGESTIONS.map((item) => (
+            {suggestions.map((item) => (
               <button type="button" key={item.label} title={item.message} onClick={() => setMessage(item.message)}>{item.label}</button>
             ))}
           </div>
         </div>
         <div className="command-actions">
-          <button className="primary-action" disabled={props.busy || !message.trim()} onClick={() => props.onSubmit(message)}>
+          <button className="primary-action" disabled={props.busy || !selectedPack || !message.trim()} onClick={() => props.onSubmit(message)}>
             {props.busy ? "编排中…" : "开始决策"}<span>↗</span>
           </button>
           {props.busy && <button className="quiet-action" onClick={props.onCancel}>取消运行</button>}
-          {reply?.phase === "proposal" && decision?.critique.verdict === "approved" && (
-            <button className="confirm-action" onClick={() => props.onSubmit("确认生成购物车草案", true)}>确认生成草案</button>
+          {((reply?.phase === "proposal" && decision?.critique.verdict === "approved") || retryableConfirmation) && (
+            <button className="confirm-action" disabled={props.busy} onClick={() => props.onSubmit("确认生成购物车草案", true)}>
+              {retryableConfirmation ? "重试确认" : "确认生成草案"}
+            </button>
           )}
         </div>
       </section>
@@ -175,6 +221,11 @@ export function DecisionView(props: {
         <span className={`run-dot ${props.run?.status ?? "idle"}`} />
         <strong>{props.run?.status ?? "ready"}</strong>
         <small>{props.run?.runId ?? "尚未创建 Run"}</small>
+        {props.run && <span className="run-metadata">
+          <b>{runPack?.displayName ?? props.run.domainPackId}</b>
+          <i>{props.run.domainPackId}</i>
+          <i>{props.run.workflowId}</i>
+        </span>}
         <em>{props.events.length} events</em>
         {reply?.cartDraft && <b>购物车草案 {reply.cartDraft.draftId} · 未支付</b>}
       </footer>

@@ -1,8 +1,27 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Shell } from "./components/Shell";
 import { LearningGuide } from "./components/LearningGuide";
-import { cancelRun, createRun, getMetrics, getPreference, getQuality, getRun, getRuntime, setPreference, watchRun } from "./lib/api";
-import type { AgentRun, MetricSnapshot, QualityReport, RunEvent, RuntimeStatus, ViewName } from "./types";
+import {
+  cancelRun,
+  createRun,
+  getDomainPacks,
+  getMetrics,
+  getPreference,
+  getQuality,
+  getRun,
+  getRuntime,
+  setPreference,
+  watchRun,
+} from "./lib/api";
+import type {
+  AgentRun,
+  DomainPackSummary,
+  MetricSnapshot,
+  QualityReport,
+  RunEvent,
+  RuntimeStatus,
+  ViewName,
+} from "./types";
 
 const DecisionView = lazy(() => import("./views/DecisionView").then((module) => ({ default: module.DecisionView })));
 const CollaborationView = lazy(() => import("./views/CollaborationView").then((module) => ({ default: module.CollaborationView })));
@@ -23,9 +42,13 @@ export default function App() {
   const [metrics, setMetrics] = useState<MetricSnapshot | null>(null);
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [quality, setQuality] = useState<QualityReport | null>(null);
+  const [domainPacks, setDomainPacks] = useState<DomainPackSummary[]>([]);
+  const [selectedDomainPackId, setSelectedDomainPackId] = useState("");
   const [personalization, setPersonalizationState] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeStream = useRef<() => void>(() => {});
+  const submittingRef = useRef(false);
 
   const refresh = useCallback(async (runId?: string) => {
     const statusRequests = await Promise.allSettled([getMetrics(), getRuntime(), getQuality()]);
@@ -60,6 +83,15 @@ export default function App() {
       const initialized = await Promise.allSettled([
         refresh(),
         getPreference().then((value) => setPersonalizationState(value.personalizationEnabled)),
+        getDomainPacks().then((registry) => {
+          setDomainPacks(registry.packs);
+          setSelectedDomainPackId((current) =>
+            registry.packs.some((pack) => pack.id === current)
+              ? current
+              : registry.defaultPackId,
+          );
+          return registry;
+        }),
       ]);
       if (initialized.every((result) => result.status === "rejected")) {
         const failure = initialized[0];
@@ -71,13 +103,20 @@ export default function App() {
       } catch {
         // The console remains usable when browser storage is unavailable.
       }
-      if (!lastRunId) return;
+      if (!lastRunId) {
+        if (initialized[2].status === "rejected") throw initialized[2].reason;
+        return;
+      }
       try {
         const restored = await getRun(lastRunId);
         setRun(restored);
-        if (restored.status === "queued" || restored.status === "running") {
-          connectRun(lastRunId, `/api/v2/runs/${encodeURIComponent(lastRunId)}/events`);
+        const registry = initialized[2].status === "fulfilled" ? initialized[2].value : null;
+        if (registry?.packs.some((pack) => pack.id === restored.domainPackId)) {
+          setSelectedDomainPackId(restored.domainPackId);
         }
+        // Replaying the persisted SSE ledger is useful for terminal Runs too:
+        // refresh must restore both the result and its auditable collaboration history.
+        connectRun(lastRunId, `/api/v2/runs/${encodeURIComponent(lastRunId)}/events`);
       } catch {
         try {
           localStorage.removeItem(LAST_RUN_KEY);
@@ -85,6 +124,7 @@ export default function App() {
           // A stale run id is harmless when storage cannot be updated.
         }
       }
+      if (initialized[2].status === "rejected") throw initialized[2].reason;
     };
     void initialize().catch((reason) => setError(
       reason instanceof Error ? reason.message : "初始化失败",
@@ -93,12 +133,43 @@ export default function App() {
   }, [connectRun, refresh]);
 
   const submit = async (message: string, confirmed = false) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       setError(null);
+      const retryingConfirmation = confirmed && run?.confirmed === true &&
+        (run.status === "failed" || run.status === "cancelled");
+      const domainPackId = confirmed ? run?.domainPackId : selectedDomainPackId;
+      const proposalRunId = confirmed
+        ? (retryingConfirmation ? run.proposalRunId ?? undefined : run?.runId)
+        : undefined;
+      const selectedPack = domainPacks.find((pack) => pack.id === domainPackId);
+      const workflowId = confirmed ? run?.workflowId : selectedPack?.workflowId;
+      if (!domainPackId || !workflowId) throw new Error("请选择一个可用的领域包");
+      if (confirmed && !proposalRunId) throw new Error("没有可确认的方案运行");
       closeStream.current();
       setEvents([]);
-      const created = await createRun(message, confirmed);
-      setRun({ runId: created.runId, status: "queued", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      const created = await createRun(
+        message,
+        confirmed,
+        domainPackId,
+        proposalRunId,
+        retryingConfirmation && proposalRunId
+          ? `confirm-${proposalRunId}-attempt-${crypto.randomUUID()}`
+          : undefined,
+      );
+      const timestamp = new Date().toISOString();
+      setRun({
+        runId: created.runId,
+        domainPackId: created.domainPackId,
+        workflowId: created.workflowId,
+        status: "queued",
+        confirmed,
+        proposalRunId: proposalRunId ?? null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
       try {
         localStorage.setItem(LAST_RUN_KEY, created.runId);
       } catch {
@@ -107,6 +178,9 @@ export default function App() {
       connectRun(created.runId, created.eventsUrl);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "运行创建失败");
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
@@ -133,7 +207,17 @@ export default function App() {
       {guideOpen && <LearningGuide runtime={runtime} onClose={closeGuide} />}
       {error && <div className="error-toast" onClick={() => setError(null)}>{error}<span>×</span></div>}
       <Suspense fallback={<div className="page"><div className="empty-state">正在装载决策视图…</div></div>}>
-        {view === "decision" && <DecisionView run={run} events={events} metrics={metrics} busy={run?.status === "queued" || run?.status === "running"} onSubmit={submit} onCancel={() => run && void cancelRun(run.runId)} />}
+        {view === "decision" && <DecisionView
+          run={run}
+          events={events}
+          metrics={metrics}
+          domainPacks={domainPacks}
+          selectedDomainPackId={selectedDomainPackId}
+          busy={submitting || run?.status === "queued" || run?.status === "running"}
+          onDomainPack={setSelectedDomainPackId}
+          onSubmit={submit}
+          onCancel={() => run && void cancelRun(run.runId)}
+        />}
         {view === "collaboration" && <CollaborationView run={run} events={events} />}
         {view === "quality" && <QualityView metrics={metrics} runtime={runtime} quality={quality} personalization={personalization} onPersonalization={updatePreference} />}
       </Suspense>

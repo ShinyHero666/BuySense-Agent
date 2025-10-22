@@ -102,7 +102,7 @@ export function CollaborationView({ run, events }: { run: AgentRun | null; event
         <span>→</span>
         <div><small>STATE OWNS</small><strong>身份 · Run · Event · Draft · Preference</strong></div>
       </section>
-      <footer className="run-strip"><span className={`run-dot ${run?.status ?? "idle"}`} /><strong>{run?.status ?? "ready"}</strong><small>{run?.runId ?? "等待 Run"}</small><em>{events.length} persisted events</em></footer>
+      <footer className="run-strip"><span className={`run-dot ${run?.status ?? "idle"}`} /><strong>{run?.status ?? "ready"}</strong><small>{run?.runId ?? "等待 Run"}</small>{run && <span className="run-metadata"><i>{run.domainPackId}</i><i>{run.workflowId}</i></span>}<em>{events.length} persisted events</em></footer>
     </div>
   );
 }

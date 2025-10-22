@@ -1,4 +1,24 @@
-import type { AgentRun, MetricSnapshot, QualityReport, RunEvent, RuntimeStatus } from "../types";
+import {
+  isBuyerReply,
+  type AgentRun,
+  type MetricSnapshot,
+  type QualityReport,
+  type RunEvent,
+  type RuntimeStatus,
+} from "../types";
+import {
+  assertContract,
+  type CreateRunRequest,
+  type CreateRunResponse,
+  type DomainPackRegistryResponse,
+} from "../generated/contracts-v2";
+
+const API_ERROR_MESSAGES: Record<string, string> = {
+  idempotency_key_reused: "该操作与已提交请求冲突，请刷新后重试。",
+  proposal_run_not_found: "原方案不存在或不属于当前会话，请重新生成方案。",
+  proposal_run_not_confirmable: "原方案当前不可确认，请重新生成方案。",
+  proposal_extension_mismatch: "确认请求与原方案的领域配置不一致，请回到原方案后重试。",
+};
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", ...init });
@@ -7,7 +27,9 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
     let message = detail;
     try {
       const parsed = JSON.parse(detail) as { message?: string; error?: string };
-      message = parsed.message ?? parsed.error ?? detail;
+      message = parsed.error && API_ERROR_MESSAGES[parsed.error]
+        ? API_ERROR_MESSAGES[parsed.error]
+        : parsed.message ?? parsed.error ?? detail;
     } catch {
       // Keep the plain response body when it is not JSON.
     }
@@ -18,24 +40,58 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function createRun(message: string, confirmed = false): Promise<{
-  runId: string;
-  eventsUrl: string;
-}> {
-  return json("/api/v2/runs", {
+export async function createRun(
+  message: string,
+  confirmed = false,
+  domainPackId?: string,
+  proposalRunId?: string,
+  idempotencyKey?: string,
+): Promise<CreateRunResponse> {
+  if (confirmed && !proposalRunId) {
+    throw new Error("确认请求缺少原方案标识，请刷新后重试。");
+  }
+  const request: CreateRunRequest = confirmed
+    ? {
+        message,
+        confirmed: true,
+        proposalRunId: proposalRunId as string,
+        ...(domainPackId ? { domainPackId } : {}),
+      }
+    : {
+        message,
+        ...(domainPackId ? { domainPackId } : {}),
+      };
+  const payload = await json<unknown>("/api/v2/runs", {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "idempotency-key": crypto.randomUUID(),
+      "idempotency-key": idempotencyKey ?? (proposalRunId
+        ? `confirm-${proposalRunId}`
+        : crypto.randomUUID()),
     },
-    body: JSON.stringify({ message, confirmed }),
+    body: JSON.stringify(request),
   });
+  assertContract("CreateRunResponse", payload);
+  return payload;
 }
 
-export const getRun = (runId: string) => json<AgentRun>(`/api/v2/runs/${encodeURIComponent(runId)}`);
+export async function getRun(runId: string): Promise<AgentRun> {
+  const payload = await json<unknown>(`/api/v2/runs/${encodeURIComponent(runId)}`);
+  assertContract("AgentRun", payload);
+  if (payload.result !== undefined && !isBuyerReply(payload.result)) {
+    throw new Error("Invalid AgentRun.result for the commerce decision console");
+  }
+  return payload as AgentRun;
+}
 export const getMetrics = () => json<MetricSnapshot>("/metrics");
 export const getRuntime = () => json<RuntimeStatus>("/health");
 export const getQuality = () => json<QualityReport>("/api/v2/quality");
+
+export async function getDomainPacks(): Promise<DomainPackRegistryResponse> {
+  const payload = await json<unknown>("/api/v2/domain-packs");
+  assertContract("DomainPackRegistryResponse", payload);
+  return payload;
+}
 
 export async function cancelRun(runId: string): Promise<void> {
   await json(`/api/v2/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
@@ -66,7 +122,8 @@ export function watchRun(
   ];
   const listener = (raw: MessageEvent<string>) => {
     try {
-      const event = JSON.parse(raw.data) as RunEvent;
+      const event: unknown = JSON.parse(raw.data);
+      assertContract("AgentRunEvent", event);
       onEvent(event);
       if (["result", "run_failed", "run_cancelled"].includes(event.eventType)) {
         source.close();

@@ -21,7 +21,7 @@ export function LearningGuide(props: { runtime: RuntimeStatus | null; onClose: (
           <span>当前运行模式：<strong>{mode}</strong></span>
         </header>
         <div className="guide-steps">
-          <article><b>01</b><div><strong>选择示例</strong><p>先用“套装决策”，观察手机、耳机和充电器如何共同满足预算。</p></div></article>
+          <article><b>01</b><div><strong>选择领域包</strong><p>先在 3C 与露营示例之间切换，观察同一工作流如何加载不同资产与规则。</p></div></article>
           <article><b>02</b><div><strong>运行决策</strong><p>Agent 负责理解和协调；召回、排序、广告保护与预算由算法服务执行。</p></div></article>
           <article><b>03</b><div><strong>查看协作</strong><p>切换到“协作拓扑”，跟踪任务委派、结构化产物和独立复议。</p></div></article>
           <article><b>04</b><div><strong>检查质量</strong><p>在“质量与运行”理解 QDSR、离线检索门禁和服务降级状态。</p></div></article>
