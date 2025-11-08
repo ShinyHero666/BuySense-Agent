@@ -1,4 +1,4 @@
-name: moyuan-sar-agent-quality-gates
+name: buysense-quality-gates
 
 on:
   push:
@@ -12,6 +12,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  java-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+          cache-dependency-path: code/java-control-plane/pom.xml
+      - name: Verify the Java main implementation
+        working-directory: code/java-control-plane
+        run: mvn -B -ntp test
+
   python-minimum:
     runs-on: ubuntu-latest
     timeout-minutes: 10

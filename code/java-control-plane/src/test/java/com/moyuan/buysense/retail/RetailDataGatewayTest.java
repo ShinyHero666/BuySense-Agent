@@ -104,7 +104,8 @@ class RetailDataGatewayTest {
                         false,
                         Duration.ofSeconds(1),
                         Duration.ofSeconds(1),
-                        1_048_576));
+                        1_048_576),
+                ShopifyProviderProperties.disabled());
     }
 
     private HttpServer failingServer() throws Exception {

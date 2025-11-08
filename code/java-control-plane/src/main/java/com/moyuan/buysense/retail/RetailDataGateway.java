@@ -1,7 +1,5 @@
 package com.moyuan.buysense.retail;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.moyuan.buysense.domain.Product;
@@ -12,26 +10,19 @@ import com.moyuan.buysense.retail.RetailDataSnapshot.CompatibilityRule;
 import com.moyuan.buysense.retail.RetailDataSnapshot.ProductEvidence;
 import com.moyuan.buysense.retail.RetailDataSnapshot.ReviewAspect;
 import com.moyuan.buysense.retail.RetailSourceState.DataSourceMetadata;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,39 +30,46 @@ import java.util.regex.Pattern;
 
 @Service
 public final class RetailDataGateway {
-    private static final Pattern PROVIDER_ID = Pattern.compile("^[a-z][a-z0-9._-]{0,63}$");
     private static final Pattern SAFE_VERSION = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
     private static final List<String> RESOURCES = List.of("catalog", "reviews", "pricing");
 
     private final ObjectMapper mapper;
-    private final ObjectMapper providerMapper;
     private final DomainPackRegistry domains;
-    private final RetailProviderProperties properties;
-    private final HttpClient client;
+    private final RetailProvider provider;
+    private final boolean fallbackEnabled;
     private final String remoteProviderId;
     private final Map<String, RetailDataSnapshot> localSnapshots = new ConcurrentHashMap<>();
     private final Map<String, RetailSourceState> states = new LinkedHashMap<>();
 
+    @Autowired
     public RetailDataGateway(
             ObjectMapper mapper,
             DomainPackRegistry domains,
-            RetailProviderProperties properties
+            RetailProviderProperties properties,
+            ShopifyProviderProperties shopifyProperties
+    ) {
+        this(
+                mapper,
+                domains,
+                selectProvider(mapper, properties, shopifyProperties),
+                selectFallback(properties, shopifyProperties));
+    }
+
+    private RetailDataGateway(
+            ObjectMapper mapper,
+            DomainPackRegistry domains,
+            RetailProvider provider,
+            boolean fallbackEnabled
     ) {
         this.mapper = mapper;
-        this.providerMapper = mapper.copy()
-                .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
         this.domains = domains;
-        this.properties = properties;
-        validateRemoteUri(properties);
-        this.remoteProviderId = properties.enabled() ? providerId(properties.baseUrl()) : null;
-        this.client = HttpClient.newBuilder()
-                .connectTimeout(properties.connectTimeout())
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .build();
+        this.provider = provider;
+        this.fallbackEnabled = fallbackEnabled;
+        this.remoteProviderId = provider == null ? null : provider.providerId();
         for (String resource : RESOURCES) {
             states.put(resource, new RetailSourceState(
-                    properties.enabled() ? "http" : "static",
-                    properties.enabled() ? remoteProviderId : null));
+                    provider == null ? "static" : provider.mode(),
+                    remoteProviderId));
         }
         domains.list().forEach(pack -> {
             RetailDataSnapshot snapshot = loadLocal(pack);
@@ -80,9 +78,18 @@ public final class RetailDataGateway {
         });
     }
 
+    static RetailDataGateway withProvider(
+            ObjectMapper mapper,
+            DomainPackRegistry domains,
+            RetailProvider provider,
+            boolean fallbackEnabled
+    ) {
+        return new RetailDataGateway(mapper, domains, provider, fallbackEnabled);
+    }
+
     public RetailDataSnapshot load(String domainPackId) {
         CommerceDomainPack pack = domains.require(domainPackId);
-        if (!properties.enabled()) {
+        if (provider == null) {
             RetailDataSnapshot local = localSnapshots.get(pack.packId());
             markLocal(local, false, null);
             return local;
@@ -97,14 +104,14 @@ public final class RetailDataGateway {
             return remote;
         } catch (ProviderException error) {
             RESOURCES.forEach(name -> states.get(name).failed(error.code()));
-            if (!properties.fallbackEnabled()) throw error;
+            if (!fallbackEnabled || !provider.allowsFallback(error.code())) throw error;
             RetailDataSnapshot fallback = localSnapshots.get(pack.packId());
             markLocal(fallback, true, error.code());
             return fallback;
         } catch (RuntimeException error) {
             ProviderException sanitized = new ProviderException("provider_invalid_response");
             RESOURCES.forEach(name -> states.get(name).failed(sanitized.code()));
-            if (!properties.fallbackEnabled()) throw sanitized;
+            if (!fallbackEnabled || !provider.allowsFallback(sanitized.code())) throw sanitized;
             RetailDataSnapshot fallback = localSnapshots.get(pack.packId());
             markLocal(fallback, true, sanitized.code());
             return fallback;
@@ -125,6 +132,7 @@ public final class RetailDataGateway {
             throw new ProviderException("proposal_selection_duplicate");
         }
 
+        if (provider != null) provider.beforeConfirmation(domainPackId);
         RetailDataSnapshot current = load(domainPackId);
         Map<String, Product> currentById = current.products().stream()
                 .collect(java.util.stream.Collectors.toMap(
@@ -140,7 +148,7 @@ public final class RetailDataGateway {
             if (!current.inStock(product) || product.stock() <= 0) {
                 throw new ProviderException("proposal_product_out_of_stock");
             }
-            if (properties.enabled() && !"remote_provider".equals(product.source())) {
+            if (provider != null && !"remote_provider".equals(product.source())) {
                 throw new ProviderException("confirmation_requires_remote_pricing");
             }
             return product;
@@ -158,7 +166,7 @@ public final class RetailDataGateway {
                 total,
                 current.catalogVersion(),
                 current.sources().get("pricingVersion"),
-                properties.enabled() ? remoteProviderId : pack.packId());
+                provider != null ? remoteProviderId : pack.packId());
     }
     public Map<String, Map<String, Object>> health() {
         Map<String, Map<String, Object>> result = new LinkedHashMap<>();
@@ -204,16 +212,14 @@ public final class RetailDataGateway {
     }
 
     private RetailDataSnapshot loadRemote(CommerceDomainPack pack) {
-        JsonNode catalog = request("GET", "/v1/catalog/" + encode(pack.packId()), null);
+        JsonNode catalog = provider.catalog(pack);
         String catalogVersion = text(catalog, "catalog_version");
         CatalogParse parsedCatalog = parseCatalog(
                 pack, catalog, remoteMetadata(catalog.path("data_source"), catalogVersion));
 
         List<String> productIds = parsedCatalog.metadata().values().stream()
                 .map(CatalogItemMetadata::spuId).distinct().limit(100).toList();
-        JsonNode reviews = request("POST", "/v1/reviews/query", Map.of(
-                "domain_pack_id", pack.packId(),
-                "product_ids", productIds));
+        JsonNode reviews = provider.reviews(pack, productIds);
         String reviewVersion = text(reviews, "review_snapshot_version");
         ReviewParse parsedReviews = parseReviews(
                 reviews, remoteMetadata(reviews.path("data_source"), reviewVersion));
@@ -221,9 +227,7 @@ public final class RetailDataGateway {
 
         List<String> offerIds = parsedCatalog.metadata().values().stream()
                 .map(CatalogItemMetadata::offerId).distinct().limit(100).toList();
-        JsonNode pricing = request("POST", "/v1/prices/quote", Map.of(
-                "domain_pack_id", pack.packId(),
-                "offer_ids", offerIds));
+        JsonNode pricing = provider.pricing(pack, offerIds);
         String pricingVersion = text(pricing, "quote_version");
         remoteMetadata(pricing.path("data_source"), pricingVersion);
         CatalogParse quotedCatalog = applyQuotes(parsedCatalog, pricing);
@@ -485,59 +489,27 @@ public final class RetailDataGateway {
         });
     }
 
-    private JsonNode request(String method, String path, Object body) {
-        try {
-            URI uri = URI.create(properties.baseUrl().replaceAll("/+$", "") + path);
-            HttpRequest.Builder request = HttpRequest.newBuilder(uri)
-                    .timeout(properties.readTimeout())
-                    .header("accept", "application/json");
-            if (!properties.apiKey().isBlank()) {
-                request.header("authorization", "Bearer " + properties.apiKey());
-            }
-            if (body == null) {
-                request.method(method, HttpRequest.BodyPublishers.noBody());
-            } else {
-                byte[] encoded = mapper.writeValueAsBytes(body);
-                if (encoded.length > 256 * 1024) throw new ProviderException("provider_request_too_large");
-                request.header("content-type", "application/json")
-                        .method(method, HttpRequest.BodyPublishers.ofByteArray(encoded));
-            }
-            HttpResponse<InputStream> response = client.send(
-                    request.build(), HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                response.body().close();
-                throw new ProviderException("provider_http_error");
-            }
-            String contentType = response.headers().firstValue("content-type").orElse("");
-            if (!contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
-                response.body().close();
-                throw new ProviderException("provider_invalid_content_type");
-            }
-            byte[] bytes;
-            try (InputStream input = response.body()) {
-                bytes = input.readNBytes(properties.maxResponseBytes() + 1);
-            }
-            if (bytes.length > properties.maxResponseBytes()) {
-                throw new ProviderException("provider_response_too_large");
-            }
-            JsonNode result;
-            try {
-                result = providerMapper.readTree(bytes);
-            } catch (JsonProcessingException error) {
-                throw new ProviderException("provider_invalid_response");
-            }
-            if (!result.isObject()) throw new ProviderException("provider_invalid_response");
-            return result;
-        } catch (java.net.http.HttpTimeoutException error) {
-            throw new ProviderException("provider_timeout");
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-            throw new ProviderException("provider_interrupted");
-        } catch (ProviderException error) {
-            throw error;
-        } catch (IOException | IllegalArgumentException error) {
-            throw new ProviderException("provider_network_error");
+    private static RetailProvider selectProvider(
+            ObjectMapper mapper,
+            RetailProviderProperties properties,
+            ShopifyProviderProperties shopifyProperties
+    ) {
+        if (properties.enabled() && shopifyProperties.enabled()) {
+            throw new IllegalArgumentException(
+                    "HTTP retail provider and Shopify provider cannot both be enabled");
         }
+        if (shopifyProperties.enabled()) {
+            return new ShopifyRetailProvider(mapper, shopifyProperties);
+        }
+        return properties.enabled() ? new HttpRetailProvider(mapper, properties) : null;
+    }
+
+    private static boolean selectFallback(
+            RetailProviderProperties properties,
+            ShopifyProviderProperties shopifyProperties
+    ) {
+        return shopifyProperties.enabled()
+                ? shopifyProperties.fallbackEnabled() : properties.fallbackEnabled();
     }
 
     private JsonNode read(String resource) throws IOException {
@@ -563,51 +535,6 @@ public final class RetailDataGateway {
 
     private static DataSourceMetadata localMetadata(String version, String providerId) {
         return new DataSourceMetadata("local_snapshot", version, providerId);
-    }
-
-    private static void validateRemoteUri(RetailProviderProperties properties) {
-        if (!properties.enabled()) return;
-        URI uri;
-        try {
-            uri = URI.create(properties.baseUrl());
-        } catch (IllegalArgumentException error) {
-            throw new IllegalArgumentException("retail provider URL is invalid", error);
-        }
-        if (uri.getScheme() == null || uri.getHost() == null
-                || (!uri.getScheme().equals("http") && !uri.getScheme().equals("https"))
-                || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
-            throw new IllegalArgumentException("retail provider URL must be an absolute HTTP(S) URL");
-        }
-        boolean loopback = uri.getHost().equalsIgnoreCase("localhost")
-                || uri.getHost().equals("127.0.0.1") || uri.getHost().equals("::1");
-        if (uri.getScheme().equals("http") && !loopback && !properties.allowInsecureHttp()) {
-            throw new IllegalArgumentException("non-loopback HTTP provider requires explicit opt-in");
-        }
-    }
-
-    private static String providerId(String baseUrl) {
-        try {
-            URI uri = URI.create(baseUrl);
-            String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
-            String host = uri.getHost().toLowerCase(Locale.ROOT);
-            if (host.contains(":")) host = "[" + host + "]";
-            int port = uri.getPort() >= 0 ? uri.getPort() : scheme.equals("https") ? 443 : 80;
-            String path = uri.getPath() == null ? "" : uri.getPath().replaceAll("/+$", "");
-            if (path.isBlank()) path = "/";
-            String canonical = scheme + "://" + host + ":" + port + path;
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(canonical.getBytes(StandardCharsets.UTF_8));
-            StringBuilder value = new StringBuilder("retail-");
-            for (int index = 0; index < 8; index++) value.append(String.format("%02x", digest[index]));
-            String result = value.toString();
-            if (!PROVIDER_ID.matcher(result).matches()) throw new IllegalStateException("invalid provider id");
-            return result;
-        } catch (Exception error) {
-            throw new IllegalStateException("unable to fingerprint retail provider", error);
-        }
-    }
-    private static String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static JsonNode array(JsonNode root, String field, int maximum) {

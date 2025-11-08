@@ -59,3 +59,13 @@ buysense:
     connect-timeout: 1s
     read-timeout: 2s
     max-response-bytes: 1048576
+  shopify:
+    enabled: ${MOYUAN_SHOPIFY_ENABLED:false}
+    store-domain: ${MOYUAN_SHOPIFY_STORE_DOMAIN:}
+    admin-access-token: ${MOYUAN_SHOPIFY_ADMIN_ACCESS_TOKEN:}
+    api-version: ${MOYUAN_SHOPIFY_API_VERSION:2026-07}
+    fallback-enabled: ${MOYUAN_SHOPIFY_FALLBACK_ENABLED:false}
+    connect-timeout: 1s
+    read-timeout: 2s
+    max-response-bytes: 1048576
+    catalog-cache-ttl: ${MOYUAN_SHOPIFY_CATALOG_CACHE_TTL:5m}

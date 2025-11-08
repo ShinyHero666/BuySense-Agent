@@ -16,8 +16,8 @@ Each production request follows one route:
 - bounded global bundle enumeration with budget, stock and compatibility checks;
 - Planner enrichment that cannot overwrite user hard constraints;
 - Critic APPROVE, RETRIEVE and CLARIFY contract with one bounded retrieval retry;
-- Catalog, Review and Pricing HTTP Provider contracts with strict provenance;
-- an authenticated Python data-plane bridge that reuses the upstream generic and Shopify adapters;
+- Catalog, Review and Pricing Provider SPI with strict provenance;
+- a Java-native, read-only Shopify Admin GraphQL adapter with fixed queries, scope checks and bounded caching;
 - strict JSON, exact response partitions, bounded I/O and fail-closed fallback defaults;
 - server-owned identity, cross-session resource hiding and request-bound idempotency;
 - database-atomic admission, bounded execution, Run leases, fencing, renewal and recovery;
@@ -49,28 +49,22 @@ cd ../apps/commerce-console
 npm run test:e2e
 ~~~
 
-## Reuse the Python/Shopify data plane
+## Java-native Shopify provider
 
-The Python service exposes the Java Provider contract only when the bridge is explicitly enabled and protected by a separate Bearer key.
+The default mode uses versioned local snapshots and needs no external credential. To read a real development, staging or production store, configure a read-only Shopify Admin token and let Java call the pinned GraphQL API directly:
 
 ~~~powershell
-# Python service
-$env:PYTHONPATH="src"
-$env:MOYUAN_RETAIL_DATA_MODE="http"
-$env:MOYUAN_RETAIL_DATA_PROVIDER="shopify"
-$env:MOYUAN_RETAIL_BRIDGE_ENABLED="true"
-$env:MOYUAN_RETAIL_BRIDGE_KEY="replace-with-an-internal-bridge-key"
-python -m shoprec.server --host 127.0.0.1 --port 18083
-
-# Java control plane
-$env:MOYUAN_RETAIL_PROVIDER_ENABLED="true"
-$env:MOYUAN_RETAIL_PROVIDER_URL="http://127.0.0.1:18083"
-$env:MOYUAN_RETAIL_PROVIDER_KEY="replace-with-the-same-internal-bridge-key"
-$env:MOYUAN_RETAIL_FALLBACK_ENABLED="false"
+$env:MOYUAN_SHOPIFY_ENABLED="true"
+$env:MOYUAN_SHOPIFY_STORE_DOMAIN="your-store.myshopify.com"
+$env:MOYUAN_SHOPIFY_ADMIN_ACCESS_TOKEN="replace-with-a-read-only-token"
+$env:MOYUAN_SHOPIFY_FALLBACK_ENABLED="false"
+$env:MOYUAN_SHOPIFY_CATALOG_CACHE_TTL="5m"
 mvn spring-boot:run
 ~~~
 
-The bridge preserves local-fallback metadata. Java therefore rejects a fallback snapshot as live confirmation pricing instead of silently treating it as remote data.
+The adapter only sends three fixed read queries, requires `read_products`, rejects every `write_*` scope, disables redirects and proxy forwarding, pins Admin API `2026-07`, bounds request/response sizes and caches the catalog for five minutes. Reviews and prices are refreshed for every decision load; confirmation invalidates the catalog cache and reloads catalog metadata, reviews and quotes. A transient provider failure may use a local snapshot only when fallback is explicitly enabled, and snapshot pricing is never accepted during confirmation.
+
+`MOYUAN_RETAIL_PROVIDER_*` remains available for a generic HTTP implementation of the same Java Provider SPI. Generic HTTP and direct Shopify modes are mutually exclusive. Neither mode requires `server.py` or a Python process.
 
 ## ModelPort integration
 
@@ -86,11 +80,9 @@ Secrets remain in environment variables and must not be committed.
 
 ## Verification boundary
 
-- 42 Java unit, integration and contract tests pass; one credentialed live-model benchmark is deliberately skipped.
+- 49 Java unit, integration and contract tests pass; one credentialed live-model benchmark is deliberately skipped.
 - 40 human-authored business cases gate routing, task completion, clarification, hard constraints and ad policy.
 - The synthetic retrieval suite has 120 queries over 1,200 generated SPUs. Labels come from catalog attributes, so this is a deterministic regression benchmark, not human relevance judgment.
-- 153 Python tests pass, including the authenticated Java bridge and the retained Shopify adapter.
-- 82 TypeScript control-plane tests pass.
-- Local catalogs are reference snapshots. Without store credentials, no claim is made about a live Shopify store, online conversion or payment execution.
+- Java Shopify tests use a deterministic mock GraphQL server. Without store credentials, no claim is made about a live Shopify store, online conversion or payment execution.
 
 See docs/PROJECT_REVIEW_CN.md for measured results, trade-offs and interview questions.

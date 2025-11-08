@@ -11,9 +11,9 @@ BuySense 以 3C 数码购买决策为主业务。用户给出预算、目标品�
 本次最终融合不是把两个程序并排摆放，而是确定一条主链路：
 
 1. Java 17 / Spring Boot 负责请求路由、Agent 编排、确定性决策、Run 生命周期和安全边界。
-2. Python 保留老师最新版中成熟的通用零售 Provider 与 Shopify 只读适配器。
-3. Java 通过带 Bearer 鉴权和来源指纹的三类 Provider 契约调用 Python 数据面。
-4. TypeScript 上游实现保留为原始契约与回归参照，不再与 Java 同时承担生产主控。
+2. Java Provider SPI 统一 Catalog、Review、Pricing 三类外部零售数据能力，本地快照、通用 HTTP 与 Shopify 是互斥实现。
+3. Java 原生 Shopify Provider 直接调用 Admin GraphQL，将上游适配器中的固定查询、分页、Scope、元数据、报价和降级规则迁入主链路。
+4. TypeScript/Python 上游实现仅保留为原始契约与回归参照，不参与最终 Java 运行链路。
 
 ## 2. 工作流与 Agent 的选择
 
@@ -53,17 +53,17 @@ flowchart LR
 | normal-3c-v1 与 outdoor-camping-v1 | Java Domain Pack Registry 与两套版本化资产 | 已吸收 |
 | Capability / Workflow Registry | Java 注册 10 项能力和有界委派边 | 已吸收 |
 | 搜索、推荐、广告与兼容证据 | Java 决策主链路 | 已吸收并保留自适应路由 |
-| 通用 HTTP 零售 Provider | Java 严格客户端契约与 Python 数据端口 | 已吸收 |
-| Shopify 只读适配器 | Python 数据面，经受保护桥接供 Java 调用 | 已复用，不重复手写 Java 版 |
-| 来源健康、显式 fallback | Java 与 Python 双端来源校验和健康状态 | 已吸收 |
+| 通用 HTTP 零售 Provider | Java `HttpRetailProvider`，作为可选外部数据实现 | 已吸收 |
+| Shopify 只读适配器 | Java `ShopifyRetailProvider` 直接调用 Admin GraphQL 2026-07 | 已迁移并进入主链路 |
+| 来源健康、显式 fallback | Java 单一主链路的来源校验、健康状态与失败关闭 | 已吸收 |
 | Run、SSE、取消、幂等 | Java 持久化 Run 状态机 | 已吸收 |
 | 有界并发与队列 | Java 可配置线程池与数据库原子准入 | 已吸收并加强跨实例竞态 |
 | 租约、fencing 与恢复 | Java 租约抢占、续租、旧 Worker 写隔离和过期 Run 扫描 | 已吸收 |
 | 确认前刷新报价 | Java 重新加载价格、库存和兼容关系 | 已吸收 |
 | 提案只能成功确认一次 | 数据库确认占位；失败/取消释放后可重试 | 已吸收 |
-| 启动与凭证安全门禁 | 环境变量、Bearer 桥接、HTTP/TLS 约束、响应体上限 | 已吸收核心运行约束 |
+| 启动与凭证安全门禁 | 环境变量、固定查询、只读 Scope、HTTPS、禁重定向/代理、响应体上限 | 已吸收并 Java 化 |
 
-“已吸收”指业务行为进入最终主链路，并有测试覆盖，不表示逐行翻译老师的 TypeScript/Python。重复翻译 Shopify 适配器只会制造两套维护成本，因此采用数据面复用；固定拓扑中不必要的全角色模型调用则由自适应路由替换。
+“已吸收”指业务行为进入最终主链路并有测试覆盖，不表示逐行翻译上游代码。考虑到本项目以 Java 学习和求职展示为目标，Shopify 适配器不再作为 Python 旁路复用，而是按同一业务契约迁入 Java；固定拓扑中不必要的全角色模型调用仍由自适应路由替换。
 
 ## 4. 四个可追问的工程点
 
@@ -81,11 +81,11 @@ Search、Recommendation、Ads 原始分数不可直接横向比较，因此先�
 
 ### 4.3 外部数据与确认一致性
 
-Catalog、Review、Pricing 使用独立 HTTP 契约。Java 校验 Bearer 鉴权、来源指纹、版本一致性、Content-Type、响应体上限、重复 JSON 键、重复 SPU/SKU/Offer、评论结果完整分区，以及报价 Offer 集合与请求集合完全一致。
+Catalog、Review、Pricing 由 Java Provider SPI 统一。通用 HTTP 实现校验 Bearer、来源指纹、Content-Type、响应体上限和严格 JSON；Shopify 实现只允许三条固定 GraphQL 查询，要求 `read_products` 且拒绝任意 `write_*` Scope，禁用重定向和代理转发，锁定 Admin API 2026-07，并校验 GID、Domain Pack 标签、Metafield、分页游标与 CNY 上下文价格。
 
-确认不是复用旧提案金额，而是再次获取价格、库存和兼容性。若远端 Provider 开启而实际返回本地 fallback，确认失败关闭，避免把本地样本冒充实时价格。
+Shopify 目录在普通决策中按 5 分钟 TTL 缓存，避免每次决策全量翻页；评价与报价每次加载都刷新。确认会先失效目录缓存，再重新获取目录元数据、报价、库存和兼容性，而不是复用旧提案金额。若远端 Provider 故障后返回本地 fallback，确认失败关闭，避免把本地样本冒充实时时价。
 
-Python 桥接只在显式开启且配置独立密钥后暴露三类内部接口。它保留老师最新版的 Shopify 适配器，同时将桥接地址指纹写入 Provider 元数据，Java 端可验证调用目标没有被替换。
+Java Mock GraphQL 契约测试覆盖直连鉴权头、目录/评价/报价映射、缓存命中、确认前强制目录刷新与价格变化、API 版本降级、写 Scope 拒绝、瞬时故障降级及 fallback 确认阻断；最终链路不需要 `server.py` 或 Python 进程。
 
 ### 4.4 可恢复 Run 与并发安全
 
@@ -99,11 +99,9 @@ Python 桥接只在显式开启且配置独立密钥后暴露三类内部接口�
 
 | 层级 | 结果 | 口径 |
 |---|---:|---|
-| Java 单元、集成、契约测试 | 42 条，0 失败，0 错误，1 跳过 | 跳过项为无凭证真实模型基准 |
+| Java 单元、集成、契约测试 | 49 条，0 失败，0 错误，1 跳过 | 新增 7 条 Java Shopify 契约测试；跳过项为无凭证真实模型基准 |
 | 人工业务回归 | 40 条，全部通过 | 覆盖路由、任务完成、澄清、套装、硬约束和广告政策 |
 | 固定合成检索基准 | 120 Query / 1,200 SPU | Recall@10 95.83%，NDCG@10 99.57%，硬过滤与广告违规为 0 |
-| TypeScript 上游控制面 | 82 条通过 | 用作上游契约和运行时参照 |
-| Python 数据面 | 153 条通过 | 覆盖双 Domain Pack、数据端口、Shopify 适配与 Java 桥接 |
 | Playwright E2E | 4/4 通过 | 离线端到端业务链路 |
 
 120 Query 的标签由目录属性生成，不是人工金标。当前没有提交真实 Shopify 凭证，也没有可复核的线上 CTR、CVR、GMV 或支付结果，因此简历不得把上述指标写成线上业务效果。
@@ -113,7 +111,7 @@ Python 桥接只在显式开启且配置独立密钥后暴露三类内部接口�
 最终版本相对老师最新版不是简单“换成 Java”，而是三项结构性迭代：
 
 1. 固定业务阶段仍保留，但请求级路由会根据输入完整度和复杂度选择澄清、确定性工作流或混合 Agent，减少无效模型调用。
-2. 老师成熟的 Python/Shopify 数据能力通过严格 Provider 边界复用，Java 只承担主控和治理，不复制数据适配实现。
+2. 将老师最新版的 Shopify 商品、评价、报价、分页、Scope 和失败关闭语义迁入 Java Provider SPI，消除 Python Bridge 运行依赖，同时保留外部数据与决策内核的边界。
 3. Java Run 层补齐数据库原子准入、队列上限、租约续期、fencing、过期恢复、确认实时重验和失败重试，避免只停留在演示工作流。
 
 剩余真实边界：

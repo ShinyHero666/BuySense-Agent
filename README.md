@@ -2,7 +2,7 @@
 
 **BuySense** 是面向 3C 商品购买决策的自适应 AI 应用。当前 Java 17 主实现通过 Spring Boot、React/ECharts、确定性搜广推数据面与受限 Planner-Critic 角色，将意图理解、多路召回、融合排序、广告保护、套装优化、证据审核和离线评测组织为可运行链路。工作流与 Agent 按请求复杂度单路由执行，不在线上同步双跑。
 
-项目同时提供版本化 Domain Pack、能力注册表和零售数据 Provider 契约，用同一套编排与质量门禁承载 `normal-3c-v1` 和 `outdoor-camping-v1`。内置快照用于确定性回归；Catalog、Pricing 与 Review 可显式切换到受控 HTTP Provider，并公开真实来源、健康状态与 fallback 结果。购物界面是可执行的工程样例，不声称连接真实商城库存或生产交易链路。
+项目同时提供版本化 Domain Pack、能力注册表和 Java 零售数据 Provider SPI，用同一套编排与质量门禁承载 `normal-3c-v1` 和 `outdoor-camping-v1`。内置快照用于确定性回归；Catalog、Pricing 与 Review 可显式切换到通用 HTTP Provider 或 Java 原生 Shopify Admin GraphQL Provider，并公开真实来源、健康状态与 fallback 结果。购物界面是可执行的工程样例，不声称连接真实商城库存或生产交易链路。
 
 ## 五分钟体验 Java 主实现
 
@@ -16,7 +16,7 @@ mvn spring-boot:run
 
 打开 `http://127.0.0.1:19090/`。接入模型时通过环境变量连接 ModelPort。完整架构、分层评测口径、方案取舍和面试材料见 [`code/java-control-plane/docs/PROJECT_REVIEW_CN.md`](./code/java-control-plane/docs/PROJECT_REVIEW_CN.md)。原 TypeScript/Python 版本保留为学习与行为参考。
 
-扩展新的商品领域时，按 [`Domain Pack 扩展指南`](./docs/DOMAIN_PACKS.md) 提交版本化 manifest 与目录、评测资产；可选 Shopify 接入先使用 `python3 code/scripts/shopify_readonly_canary.py --check` 验证配置，再执行只读连通性探针。探针通过只代表凭证、固定 API 版本和最小读权限可用，不代表业务 Provider 已通过验收。
+扩展新的商品领域时，按 [`Domain Pack 扩展指南`](./docs/DOMAIN_PACKS.md) 提交版本化 manifest 与目录、评测资产。可选 Shopify 接入由 Java 直接调用固定版本 Admin GraphQL：开发店、测试店或生产店都需要店铺域名与只读 Admin Token；无凭证时使用本地快照和 Mock GraphQL 契约测试，不宣称已验收真实商城。
 
 ## V2 学习主线
 

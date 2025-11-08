@@ -5,6 +5,7 @@ import com.moyuan.buysense.platform.DomainPackRegistry;
 import com.moyuan.buysense.platform.ExtensionRegistry;
 import com.moyuan.buysense.retail.RetailDataGateway;
 import com.moyuan.buysense.retail.RetailProviderProperties;
+import com.moyuan.buysense.retail.ShopifyProviderProperties;
 
 import java.time.Duration;
 
@@ -23,7 +24,8 @@ final class AgentTestFixture {
                     false,
                     Duration.ofSeconds(1),
                     Duration.ofSeconds(2),
-                    1_048_576));
+                    1_048_576),
+            ShopifyProviderProperties.disabled());
     final IntentParser parser = new IntentParser(domains);
     final DecisionEngine engine = new DecisionEngine(retail, domains);
 }
