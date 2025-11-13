@@ -56,7 +56,7 @@ class AgentControllerTest {
     }
 
     @Test
-    void sparseRequestStillRunsTheBoundedCollaborationChain() throws Exception {
+    void sparseRequestAsksForCategoryBeforeProductRetrieval() throws Exception {
         var creation = mvc.perform(post("/api/v2/runs")
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("Idempotency-Key", "single-chain-contract")
@@ -71,13 +71,13 @@ class AgentControllerTest {
 
         JsonNode completed = awaitTerminalRun(runId, cookie);
         assertThat(completed.at("/result/phase").asText())
-                .isIn("proposal", "needs_replan");
+                .isEqualTo("clarification");
         assertThat(completed.at("/result/decision/runtime/mode").asText()).isEqualTo("replay");
         assertThat(runs.require(runId).getEvents().stream()
                 .anyMatch(event -> "data_plane_result".equals(event.payload().get("event"))))
-                .isTrue();
+                .isFalse();
         assertThat(runs.require(runId).getEvents().stream()
-                .noneMatch(event -> "clarification_question".equals(
+                .anyMatch(event -> "clarification".equals(
                         event.payload().get("artifactType"))))
                 .isTrue();
     }

@@ -7,6 +7,9 @@ import java.util.List;
 /** One OpenAI-compatible model turn used by the bounded role Agent loop. */
 public interface AgentModelTransport {
     Completion complete(Request request);
+    default boolean roleEnabled(String role) {
+        return true;
+    }
     default String mode() {
         return "modelport";
     }
@@ -25,11 +28,19 @@ public interface AgentModelTransport {
             String role,
             int turn,
             List<Message> messages,
-            List<ToolDefinition> tools
+            List<ToolDefinition> tools,
+            java.time.Duration timeout
     ) {
+        public Request(String runId, String role, int turn, List<Message> messages, List<ToolDefinition> tools) {
+            this(runId, role, turn, messages, tools, java.time.Duration.ofSeconds(45));
+        }
+
         public Request {
             messages = List.copyOf(messages);
             tools = List.copyOf(tools);
+            if (timeout == null || timeout.isNegative() || timeout.isZero()) {
+                throw new IllegalArgumentException("timeout must be positive");
+            }
         }
     }
 
@@ -85,8 +96,14 @@ public interface AgentModelTransport {
     }
 
     final class UnavailableException extends RuntimeException {
+        private final boolean retryable;
         public UnavailableException(String message) {
-            super(message);
+            this(message, false);
         }
+        public UnavailableException(String message, boolean retryable) {
+            super(message);
+            this.retryable = retryable;
+        }
+        public boolean retryable() { return retryable; }
     }
 }

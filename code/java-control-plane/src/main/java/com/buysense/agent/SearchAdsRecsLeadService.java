@@ -114,11 +114,16 @@ public class SearchAdsRecsLeadService {
             observer.onTrace(step);
         };
         var workflowGraph = domains.requireWorkflowGraph(domain.workflowId());
+        var defaults = BoundedCollaborationCoordinator.DEFAULT_POLICY;
+        var policy = new BoundedCollaborationCoordinator.Policy(
+                defaults.maxTasks(), defaults.maxDelegationProposals(), defaults.maxDepth(),
+                defaults.maxConcurrent(), model.maxCallsPerRun(),
+                defaults.maxRevisionAttempts(), defaults.deadlineMs());
         BoundedCollaborationCoordinator coordinator =
                 new BoundedCollaborationCoordinator(
                         runId,
                         traceSink,
-                        BoundedCollaborationCoordinator.DEFAULT_POLICY,
+                        policy,
                         workflowGraph.allowedDelegations(),
                         workflowGraph.roleCapabilities(),
                         cancellationRequested);
@@ -140,6 +145,22 @@ public class SearchAdsRecsLeadService {
                         roleAgent, roleCalls, task.taskId()));
         Plan plan = planExecution.plan();
         AgentArtifact planArtifact = planExecution.artifact();
+        if (!plan.requirement().clarificationQuestions().isEmpty()) {
+            String question = String.join(" ", plan.requirement().clarificationQuestions())
+                    + " 补充后请重新发送完整选购需求。";
+            traceSink.add("intent_router", "clarification_required", Map.of("questions",
+                    plan.requirement().clarificationQuestions()));
+            publishToolArtifact(artifacts, traceSink, "clarification", "intent_router",
+                    planArtifact.artifactId(), AgentArtifact.Status.VETOED, Map.of("message", question));
+            Audit unclear = new Audit(false, List.of("requirements_unclear"), Map.of(),
+                    "unavailable", question);
+            DecisionResult result = new DecisionResult(plan.requirement(), List.of(), List.of(),
+                    List.copyOf(trace), Map.of("clarificationRequired", true, "criticVerdict", "vetoed",
+                            "criticViolations", unclear.violations()),
+                    runtime(plan, question, unclear, false, trace));
+            return new Execution(result, List.copyOf(roleCalls), coordinator.tasks(),
+                    coordinator.proposals(), false, artifacts.list());
+        }
 
         FutureTask<ChannelResult> searchFuture = async(() -> runChannel(
                 coordinator, artifacts, roleAgent, roleCalls, traceSink, plan, "search", "lead", planArtifact.artifactId(),
@@ -200,7 +221,6 @@ public class SearchAdsRecsLeadService {
                 "lead", "critic", "independent_decision_audit",
                 initialDecision.parentTaskId(), 1, 0,
                 task -> {
-                    coordinator.consumeModelCall("critic");
                     ObjectNode modelInput =
                             criticInput(plan, initialDecision, deterministicAudit);
                     ObjectNode authoritative =
@@ -293,7 +313,14 @@ public class SearchAdsRecsLeadService {
                     coordinator, artifacts, plan, channels, domain,
                     revisedRecommendation.artifactId(), trace, traceSink,
                     expandedFusionLimit);
-            audit = audit(plan, channels, decision, domain);
+            ObjectNode priorReview = mapper.createObjectNode().put("verdict", audit.modelVerdict());
+            priorReview.set("additionalViolations", mapper.valueToTree(audit.violations()));
+            priorReview.put("rationale", audit.rationale());
+            Audit repairedAudit = audit(plan, channels, decision, domain);
+            Audit rechecked = resolveCritic(repairedAudit, priorReview, decision).audit();
+            traceSink.add("critic", "previous_violations_rechecked", Map.of(
+                    "previous", audit.violations(), "remaining", rechecked.violations()));
+            audit = rechecked;
             withAudit = withAudit(decision.result(), audit);
             critiqueArtifact = publishToolArtifact(artifacts, traceSink,
                     "critique",
@@ -320,7 +347,6 @@ public class SearchAdsRecsLeadService {
                 "critic", "lead", "grounded_response_composition",
                 critiqueArtifact.artifactId(), 1, 0,
                 task -> {
-                    coordinator.consumeModelCall("lead");
                     ObjectNode authoritative = mapper.createObjectNode();
                     authoritative.put("message", deterministicMessage);
                     authoritative.put("approved", finalApproved);
@@ -400,10 +426,12 @@ public class SearchAdsRecsLeadService {
     ) {
         Requirement baseline = parser.parse(message, domain.packId());
         ObjectNode authoritative = mapper.createObjectNode().put("message", message);
+        authoritative.set("baseline", mapper.valueToTree(baseline));
+        authoritative.set("supportedCategories", mapper.valueToTree(domain.categories()));
+        authoritative.set("supportedBrands", mapper.valueToTree(domain.brands()));
         java.util.concurrent.atomic.AtomicReference<Plan> selected =
                 new java.util.concurrent.atomic.AtomicReference<>();
 
-        coordinator.consumeModelCall("intent_router");
         BoundedRoleAgent.Result modelResult = roleAgent.run(new BoundedRoleAgent.Spec(
                 "intent_router",
                 runId,
@@ -415,7 +443,10 @@ public class SearchAdsRecsLeadService {
                 retrievalPlanContract(domain),
                 "你是电商意图与检索路由 Agent。理解自然语言需求并选择必要的 Search、Recommendation、"
                         + "Ads 通道；Search 是保底通道，套装必须保留 Recommendation，Ads 仅在用户"
-                        + "未退出且确有必要时选择。预算和广告退出属于硬约束，不得放宽。",
+                        + "未退出且确有必要时选择。预算和广告退出属于硬约束，不得放宽。"
+                        + "先提取需求；补充基线未识别的预算或品类时，必须在 evidence 中引用用户原文。"
+                        + "没有预算就返回 null，不把型号当预算；不要把拒绝品牌当偏好。"
+                        + "单品不必推荐配件，无法识别的品类不强行套用默认商品。",
                 (input, proposal) -> {
                     PlanResolution resolution = resolvePlanProposal(
                             runId, message, domain, discoveryContext, baseline, proposal);
@@ -441,9 +472,10 @@ public class SearchAdsRecsLeadService {
             String message,
             CommerceDomainPack domain,
             DiscoveryContext discoveryContext,
-            Requirement baseline,
+            Requirement parsedBaseline,
             JsonNode proposal
     ) {
+        Requirement baseline = parser.resolveGrounded(parsedBaseline, proposal, domain);
         boolean proposed = proposal != null && proposal.isObject();
         List<String> corrections = new ArrayList<>();
         if (proposal != null && !proposal.isObject()) {
@@ -453,7 +485,8 @@ public class SearchAdsRecsLeadService {
         String baselineIntent = baseline.bundleRequested()
                 ? "bundle"
                 : inferIntent(baseline.originalQuery(), domain);
-        List<String> baselineChannels = new ArrayList<>(List.of("search", "recommendation"));
+        List<String> baselineChannels = new ArrayList<>(List.of("search"));
+        if (baseline.bundleRequested()) baselineChannels.add("recommendation");
         if (baseline.sponsoredAllowed()) baselineChannels.add("ads");
         Map<String, Integer> baselineBudgets = new LinkedHashMap<>();
         baselineBudgets.put("search", 8);
@@ -476,7 +509,10 @@ public class SearchAdsRecsLeadService {
         }
 
         String proposedQuery = proposed ? boundedString(proposal.get("query"), 240) : null;
-        String query = proposedQuery == null ? baseline.retrievalQuery() : proposedQuery;
+        String query = baseline.originalQuery();
+        if (proposedQuery != null && !query.equals(proposedQuery)) {
+            corrections.add("original_query_preserved");
+        }
         if (proposed && proposal.has("query") && proposedQuery == null) {
             corrections.add("invalid_query");
         }
@@ -501,7 +537,11 @@ public class SearchAdsRecsLeadService {
         List<String> proposedUseCases = proposed
                 ? boundedStringArray(proposal.get("useCases"), 20) : null;
         List<String> validUseCases = proposedUseCases == null ? List.of()
-                : proposedUseCases.stream().filter(domain.useCases()::contains).toList();
+                : proposedUseCases.stream().filter(domain.useCases()::contains)
+                        .filter(useCase -> baseline.useCases().contains(useCase)
+                                || IntentParser.groundedSpan(baseline.originalQuery(),
+                                        proposal.path("evidence").path("useCases").path(useCase)) != null)
+                        .toList();
         LinkedHashSet<String> useCases = new LinkedHashSet<>(baseline.useCases());
         useCases.addAll(validUseCases);
         if (proposedUseCases != null && validUseCases.size() != proposedUseCases.size()) {
@@ -637,14 +677,21 @@ public class SearchAdsRecsLeadService {
                 .collect(Collectors.joining("|"));
         String useCases = String.join("|", domain.useCases());
         return "{\"intent\":\"precise|catalog|exploratory|bundle|compare\","
-                + "\"query\":\"grounded rewrite\","
+                + "\"query\":\"original user query\","
+                + "\"budgetMax\":number|null,"
                 + "\"requestedCategories\":[\"" + categories + "\"],"
                 + "\"preferredBrands\":[\"brand\"],"
+                + "\"excludedBrands\":[\"brand\"],"
                 + "\"useCases\":[\"" + useCases + "\"],"
                 + "\"channels\":[\"search|recommendation|ads\"],"
                 + "\"sponsoredAllowed\":boolean,"
-                + "\"candidateBudget\":{\"search\":1-20,"
-                + "\"recommendation\":1-20,\"ads\":0-8},"
+                + "\"candidateBudget\":{\"search\":1-12,"
+                + "\"recommendation\":1-12,\"ads\":1-4},"
+                + "\"evidence\":{\"budgetMax\":\"exact original phrase with budget\","
+                + "\"requestedCategories\":{\"categoryId\":\"exact original phrase\"},"
+                + "\"excludedBrands\":{\"brand\":\"exact rejection phrase\"},"
+                + "\"useCases\":{\"useCase\":\"exact original phrase\"},"
+                + "\"sponsoredAllowed\":\"exact advertising rejection phrase\"},"
                 + "\"reason\":\"short grounded reason\"}";
     }
 
@@ -744,7 +791,6 @@ public class SearchAdsRecsLeadService {
                                 channel, items, response, task.taskId(), artifact.artifactId());
                     }
 
-                    coordinator.consumeModelCall(channel);
                     ObjectNode authoritative = mapper.createObjectNode();
                     authoritative.set("plan", planPayload(plan));
                     authoritative.set("result", channelArtifactNode(channel, response));
@@ -916,7 +962,14 @@ public class SearchAdsRecsLeadService {
         detail.put("providerId", dataSource.path("provider_id").asText());
     }
 
-    private RankingResolution resolveModelRanking(ObjectNode source, JsonNode proposal) {
+    RankingResolution resolveModelRanking(ObjectNode source, JsonNode proposal) {
+        return resolveModelRanking(source, proposal, 0.20);
+    }
+
+    RankingResolution resolveModelRanking(ObjectNode source, JsonNode proposal, double modelWeight) {
+        if (!Double.isFinite(modelWeight) || modelWeight < 0 || modelWeight > 1) {
+            throw new IllegalArgumentException("modelWeight must be between zero and one");
+        }
         ObjectNode response = source.deepCopy();
         List<JsonNode> items = array(response.path("items"));
         List<String> requested = proposal != null && proposal.path("rankedSkuIds").isArray()
@@ -948,7 +1001,7 @@ public class SearchAdsRecsLeadService {
             double modelScore = Math.max(
                     0, 1 - modelIndex / (double) Math.max(1, items.size()));
             double score = item.path("normalized_score").asDouble();
-            item.put("normalized_score", round6(score * 0.8 + modelScore * 0.2));
+            item.put("normalized_score", round6(score * (1 - modelWeight) + modelScore * modelWeight));
             String rationale = rationaleBySku.path(productId(item)).asText("").trim();
             if (!rationale.isBlank() && rationale.length() <= 160) {
                 ArrayNode reasons = item.withArray("reasons");
@@ -964,7 +1017,8 @@ public class SearchAdsRecsLeadService {
             item.put("_model_index", modelIndex);
             adjusted.add(item);
         }
-        adjusted.sort(Comparator.comparingInt(item -> item.path("_model_index").asInt()));
+        adjusted.sort(Comparator.comparingDouble(
+                (ObjectNode item) -> item.path("normalized_score").asDouble()).reversed());
         ArrayNode output = response.putArray("items");
         adjusted.forEach(item -> {
             item.remove("_model_index");
@@ -1008,6 +1062,9 @@ public class SearchAdsRecsLeadService {
                     ArrayNode values = request.putArray("channels");
                     channels.forEach(channel -> values.add(channel.response()));
                     request.put("limit", fusionLimit);
+                    if (plan.intent().equals("bundle")) {
+                        request.set("required_categories", mapper.valueToTree(plan.requirement().requiredCategories()));
+                    }
                     ObjectNode response =
                             mapper.valueToTree(dataPlane.fuse(domain.packId(), request));
                     AgentArtifact artifact = publishToolArtifact(
@@ -1197,9 +1254,7 @@ public class SearchAdsRecsLeadService {
                 ? domain.primaryCategory()
                 : plan.requirement().requiredCategories().stream().findFirst().orElse(domain.defaultCategory());
         Set<String> required = plan.intent().equals("bundle")
-                ? plan.requirement().requiredCategories().stream()
-                        .filter(domain.defaultBundleCategories()::contains)
-                        .collect(Collectors.toCollection(LinkedHashSet::new))
+                ? new LinkedHashSet<>(plan.requirement().requiredCategories())
                 : Set.of(primaryCategory);
         Map<String, JsonNode> quotes = array(decision.quotes().path("quotes")).stream()
                 .collect(Collectors.toMap(item -> item.path("offer_id").asText(), item -> item,
@@ -1226,11 +1281,8 @@ public class SearchAdsRecsLeadService {
                                 item.path("price").decimalValue().compareTo(plan.budgetMax()) <= 0)
                         : total.compareTo(plan.budgetMax()) <= 0);
         checks.put("budget_respected", budgetRespected);
-        if (plan.intent().equals("bundle") && plan.budgetMax() != null) {
-            BigDecimal utilization = total.divide(plan.budgetMax(), 4, RoundingMode.HALF_UP);
-            checks.put("budget_utilization_reasonable",
-                    requestsLowCost(plan) || utilization.compareTo(new BigDecimal("0.65")) >= 0);
-        }
+        checks.put("excluded_brands_respected", selected.stream()
+                .noneMatch(item -> plan.requirement().excludedBrands().contains(item.path("brand").asText())));
         checks.put("offer_quote_grounded", selected.stream().allMatch(item ->
                 !item.path("offer_id").asText().isBlank()
                         && !item.path("quote_version").asText().isBlank()
@@ -1419,7 +1471,7 @@ public class SearchAdsRecsLeadService {
                 .map(this::roleExecution)
                 .toList();
         AgentModelTransport.Description description = model.describe("lead");
-        int modelCalls = model.mode().equals("modelport") ? roleExecutions.size() : 0;
+        int modelCalls = (int) trace.stream().filter(step -> step.decision().equals("model_budget_consumed")).count();
         int fallbackCount = (int) roleExecutions.stream()
                 .filter(item -> item.outcome().equals("fallback")).count();
         int proposalAccepted = (int) roleExecutions.stream()
@@ -1656,6 +1708,7 @@ public class SearchAdsRecsLeadService {
         plan.requirement().useCases().forEach(useCases::add);
         ArrayNode preferredBrands = request.putArray("preferred_brands");
         plan.requirement().preferredBrands().forEach(preferredBrands::add);
+        request.set("excluded_brands", mapper.valueToTree(plan.requirement().excludedBrands()));
         ArrayNode primary = request.putArray("primary_product_ids");
         primaryProducts.forEach(item -> primary.add(item.path("product_id").asText()));
         if (plan.budgetMax() == null) request.putNull("max_price");
@@ -2078,12 +2131,6 @@ public class SearchAdsRecsLeadService {
         };
     }
 
-    private boolean requestsLowCost(Plan plan) {
-        String query = plan.requirement().retrievalQuery().toLowerCase(Locale.ROOT);
-        return List.of("便宜", "省钱", "最低价", "性价比", "够用", "低价")
-                .stream().anyMatch(query::contains);
-    }
-
     private List<ChannelResult> orderedChannels(
             Plan plan,
             ChannelResult search,
@@ -2108,7 +2155,6 @@ public class SearchAdsRecsLeadService {
         Set<String> present = selected.stream().map(item -> item.path("category").asText())
                 .collect(Collectors.toSet());
         return plan.requirement().requiredCategories().stream()
-                .filter(domain.defaultBundleCategories()::contains)
                 .filter(category -> !present.contains(category))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
@@ -2323,8 +2369,8 @@ public class SearchAdsRecsLeadService {
         }
     }
 
-    private record RankingResolution(ObjectNode response, List<String> corrections) {
-        private RankingResolution {
+    record RankingResolution(ObjectNode response, List<String> corrections) {
+        RankingResolution {
             corrections = List.copyOf(corrections);
         }
     }

@@ -18,6 +18,7 @@ public final class CommerceFusionEngine {
     private CommerceFusionEngine() {
     }
 
+    /** Both score fields represent the same bid-free relevance signal, not auction scores. */
     public record CandidateSignals(
             String category,
             double organicScore,
@@ -106,6 +107,7 @@ public final class CommerceFusionEngine {
                 Double organicBest = bestOrganicByCategory.get(candidate.category());
                 if (!candidate.sponsored()
                         || organicBest == null
+                        || candidate.sponsoredScore() < SponsoredPlacementPolicy.MINIMUM_RELEVANCE
                         || candidate.sponsoredScore()
                                 < policy.organicRelevanceFloorRatio() * organicBest
                         || candidate.adQuality() < policy.minimumAdQuality()) {

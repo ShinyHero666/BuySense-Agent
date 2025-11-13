@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ModelPortAgentBridgeToolCallTest {
     private final ObjectMapper mapper = new ObjectMapper();
@@ -128,6 +129,65 @@ class ModelPortAgentBridgeToolCallTest {
                     });
         });
         assertThat(completion.usage()).isEqualTo(AgentModelTransport.Usage.ZERO);
+    }
+
+    @Test
+    void requestDeadlineBoundsAStalledHttpResponse() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        server.createContext("/v1/chat/completions", exchange -> {
+            try {
+                release.await(3, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        try {
+            ModelPortAgentBridge bridge = liveBridge(server);
+            long started = System.nanoTime();
+            assertThatThrownBy(() -> bridge.complete(request(Duration.ofMillis(150))))
+                    .isInstanceOf(AgentModelTransport.UnavailableException.class);
+            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(2));
+        } finally {
+            release.countDown();
+            server.stop(0);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"503,true", "400,false", "429,false"})
+    void onlyTransientServerFailuresAllowAnImmediateRetry(int status, boolean retryable) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            exchange.sendResponseHeaders(status, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            assertThatThrownBy(() -> liveBridge(server).complete(request(Duration.ofSeconds(2))))
+                    .isInstanceOfSatisfying(AgentModelTransport.UnavailableException.class,
+                            error -> assertThat(error.retryable()).isEqualTo(retryable));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private ModelPortAgentBridge liveBridge(HttpServer server) {
+        ModelPortProperties properties = new ModelPortProperties();
+        properties.setEnabled(true);
+        properties.setApiKey("test-key");
+        properties.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+        properties.setReadTimeout(Duration.ofSeconds(10));
+        return new ModelPortAgentBridge(properties, mapper);
+    }
+
+    private AgentModelTransport.Request request(Duration timeout) {
+        return new AgentModelTransport.Request("timeout-test", "critic", 1,
+                List.of(AgentModelTransport.Message.user("audit")), List.of(), timeout);
     }
 
     private void send(HttpExchange exchange, String json) throws IOException {

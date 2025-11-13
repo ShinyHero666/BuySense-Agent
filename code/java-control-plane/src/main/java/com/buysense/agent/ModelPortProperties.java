@@ -18,7 +18,7 @@ public class ModelPortProperties {
     private Map<String, String> roleModels = Map.of();
     private Duration connectTimeout = Duration.ofSeconds(1);
     private Duration readTimeout = Duration.ofSeconds(45);
-    private int maxCallsPerRun = 6;
+    private int maxCallsPerRun = 12;
     private int maxTokensPerCall = 768;
     private String thinkingMode = "disabled";
     private Set<String> disabledRoles = Set.of();
@@ -103,6 +103,7 @@ public class ModelPortProperties {
     }
 
     public void setMaxCallsPerRun(int maxCallsPerRun) {
+        if (maxCallsPerRun < 1) throw new IllegalArgumentException("maxCallsPerRun must be positive");
         this.maxCallsPerRun = maxCallsPerRun;
     }
 

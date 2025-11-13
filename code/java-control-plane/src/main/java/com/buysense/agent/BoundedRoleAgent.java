@@ -58,6 +58,7 @@ public final class BoundedRoleAgent {
         trace.add(spec.role(), "agent_start", Map.of());
         coordinator.assertActive();
         int turn = 0;
+        int transientRetries = 0;
         int totalTokens = 0;
         int inputTokens = 0;
         int outputTokens = 0;
@@ -66,9 +67,31 @@ public final class BoundedRoleAgent {
         try {
             while (true) {
                 coordinator.assertActive();
-                AgentModelTransport.Completion completion = transport.complete(
-                        new AgentModelTransport.Request(
-                                spec.runId(), spec.role(), ++turn, messages, toolDefinitions()));
+                if (turn >= 4) {
+                    executionError = "role_turn_limit_exhausted";
+                    break;
+                }
+                if (!transport.roleEnabled(spec.role())) {
+                    throw new AgentModelTransport.UnavailableException("model role is disabled: " + spec.role());
+                }
+                if (!"replay".equals(transport.mode())) coordinator.consumeModelCall(spec.role());
+                AgentModelTransport.Completion completion;
+                try {
+                    completion = transport.complete(new AgentModelTransport.Request(
+                            spec.runId(), spec.role(), ++turn, messages, toolDefinitions(),
+                            coordinator.remainingTime()));
+                } catch (AgentModelTransport.UnavailableException error) {
+                    if (!error.retryable() || transientRetries++ >= 1
+                            || coordinator.remainingTime().toMillis() <= 200) throw error;
+                    trace.add(spec.role(), "model_retry", Map.of("attempt", transientRetries));
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new CancellationException("model retry interrupted");
+                    }
+                    continue;
+                }
                 coordinator.assertActive();
                 totalTokens += completion.usage().totalTokens();
                 inputTokens += completion.usage().inputTokens();

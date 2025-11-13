@@ -56,13 +56,13 @@ class RetrievalPlanPolicyParityTest {
         SearchAdsRecsLeadService.Plan plan = resolved.plan();
 
         assertThat(plan.intent()).isEqualTo("bundle");
-        assertThat(plan.requirement().retrievalQuery()).isEqualTo("拍照 套装");
+        assertThat(plan.requirement().retrievalQuery()).isEqualTo(baseline.originalQuery());
         assertThat(plan.requirement().budget()).isEqualByComparingTo("7000");
         assertThat(plan.requirement().requiredCategories())
                 .containsExactlyElementsOf(baseline.requiredCategories());
         assertThat(plan.requirement().preferredBrands())
                 .containsExactlyElementsOf(baseline.preferredBrands());
-        assertThat(plan.requirement().useCases()).contains("拍照", "游戏");
+        assertThat(plan.requirement().useCases()).containsExactly("拍照");
         assertThat(plan.requirement().sponsoredAllowed()).isFalse();
         assertThat(plan.channels()).containsExactly("search", "recommendation");
         assertThat(plan.candidateBudget())
@@ -71,8 +71,10 @@ class RetrievalPlanPolicyParityTest {
                 .containsEntry("ads", 4);
         assertThat(resolved.corrections()).containsExactly(
                 "explicit_intent_preserved",
+                "original_query_preserved",
                 "unsupported_category_removed",
                 "explicit_category_scope_preserved",
+                "unsupported_use_case_removed",
                 "explicit_use_case_preserved",
                 "ungrounded_brand_preference_removed",
                 "ad_opt_out_enforced",
@@ -106,7 +108,7 @@ class RetrievalPlanPolicyParityTest {
         assertThat(resolved.plan().intent()).isEqualTo("catalog");
         assertThat(resolved.plan().channels())
                 .containsExactly("search", "recommendation", "ads");
-        assertThat(resolved.plan().requirement().useCases()).contains("游戏");
+        assertThat(resolved.plan().requirement().useCases()).isEmpty();
         assertThat(resolved.corrections()).contains("explicit_intent_preserved");
     }
 

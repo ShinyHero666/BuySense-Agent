@@ -2,7 +2,7 @@
   "schemaVersion": "2.0",
   "suiteId": "buysense-catalog-v2",
   "description": "BuySense 当前商品目录评测集：覆盖 3C 与户外露营域的任务结果、能力约束、执行过程、证据、安全红线及具备可验证前提的人工复核。",
-  "systemVersion": "buysense-java-0.2.0-eval-v2",
+  "systemVersion": "buysense-java-priority-policy-v3",
   "cases": [
     {
       "caseId": "3c-bundle-7000-photo-no-ads",
@@ -35,10 +35,9 @@
         "sponsoredAllowed": false,
         "maxSponsoredTop3": 0,
         "minSelectedItems": 3,
-        "minBudgetUtilization": 0.65,
         "minDistinctProducts": 3,
         "requiredAuditChecks": [
-          "budget_utilization_reasonable"
+          "budget_respected"
         ],
         "requiredResponsePhrases": [
           "推荐依据",
@@ -179,10 +178,9 @@
         "sponsoredAllowed": true,
         "maxSponsoredTop3": 1,
         "minSelectedItems": 3,
-        "minBudgetUtilization": 0.65,
         "minDistinctProducts": 3,
         "requiredAuditChecks": [
-          "budget_utilization_reasonable"
+          "budget_respected"
         ],
         "requiredResponsePhrases": [
           "推荐依据",
@@ -659,10 +657,9 @@
         "sponsoredAllowed": true,
         "maxSponsoredTop3": 1,
         "minSelectedItems": 3,
-        "minBudgetUtilization": 0.65,
         "minDistinctProducts": 3,
         "requiredAuditChecks": [
-          "budget_utilization_reasonable",
+          "budget_respected",
           "compatibility_verified",
           "compatibility_graph_grounded"
         ],

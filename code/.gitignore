@@ -1,4 +1,5 @@
 .env
 data/
+!java-control-plane/src/test/java/com/buysense/sar/data/
 target/
 *.log

@@ -10,6 +10,7 @@ public record SponsoredPlacementPolicy(
         int insertionIndex,
         int maximumSponsored,
         boolean disclosureRequired) {
+    public static final double MINIMUM_RELEVANCE = 0.50;
     public static final SponsoredPlacementPolicy SAFE_V1 =
             new SponsoredPlacementPolicy(
                     "sponsored-safety-v1",

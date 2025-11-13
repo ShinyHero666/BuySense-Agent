@@ -66,7 +66,8 @@ public class FrontendContractMapper {
     public BuyerReply proposal(DecisionResult result) {
         Decision decision = decision(result);
         return new BuyerReply(
-                decision.critique().verdict().equals("approved") ? "proposal" : "needs_replan",
+                Boolean.TRUE.equals(result.metrics().get("clarificationRequired")) ? "clarification"
+                        : decision.critique().verdict().equals("approved") ? "proposal" : "needs_replan",
                 decision.message(),
                 decision,
                 null);
@@ -83,8 +84,11 @@ public class FrontendContractMapper {
                 .toList();
         BundleView bundle = bundle(result, maxScore);
         Critique critique = critique(result, bundle);
-        List<String> channels = new ArrayList<>(List.of("search", "recommendation"));
-        if (requirement.sponsoredAllowed()) channels.add("ads");
+        List<String> channels = result.trace().stream()
+                .filter(trace -> "task_completed".equals(trace.decision()))
+                .map(trace -> trace.stage())
+                .filter(Set.of("search", "recommendation", "ads")::contains)
+                .distinct().toList();
 
         List<ConstraintView> constraints = requirement.constraints().stream()
                 .map(constraint -> new ConstraintView(
@@ -168,6 +172,9 @@ public class FrontendContractMapper {
     }
 
     private Critique critique(DecisionResult result, BundleView bundle) {
+        if (Boolean.TRUE.equals(result.metrics().get("clarificationRequired"))) {
+            return new Critique("vetoed", List.of("requirement_clarification_required"), Map.of());
+        }
         Map<String, Boolean> checks = new LinkedHashMap<>();
         Object rawChecks = result.metrics().get("criticChecks");
         if (rawChecks instanceof Map<?, ?> values) {

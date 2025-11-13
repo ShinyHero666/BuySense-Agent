@@ -20,13 +20,13 @@ class BoundedCollaborationCoordinatorTest {
         assertThat(policy.maxDelegationProposals()).isEqualTo(12);
         assertThat(policy.maxDepth()).isEqualTo(4);
         assertThat(policy.maxConcurrent()).isEqualTo(4);
-        assertThat(policy.maxModelCalls()).isEqualTo(6);
+        assertThat(policy.maxModelCalls()).isEqualTo(12);
         assertThat(policy.maxRevisionAttempts()).isEqualTo(1);
         assertThat(policy.deadlineMs()).isEqualTo(90_000);
     }
 
     @Test
-    void rejectsUnknownEdgesCapabilitiesAndTheSeventhModelCall() {
+    void rejectsUnknownEdgesCapabilitiesAndCallsBeyondTheBudget() {
         List<String> events = new ArrayList<>();
         var coordinator = new BoundedCollaborationCoordinator(
                 "run-1", (role, event, detail) -> events.add(role + ":" + event));
@@ -40,11 +40,14 @@ class BoundedCollaborationCoordinatorTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("collaboration_capability_denied");
 
-        for (int index = 0; index < 6; index++) coordinator.consumeModelCall("lead");
+        for (int index = 0; index < BoundedCollaborationCoordinator.DEFAULT_POLICY.maxModelCalls(); index++) {
+            coordinator.consumeModelCall("lead");
+        }
         assertThatThrownBy(() -> coordinator.consumeModelCall("lead"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("model_call_budget_exhausted");
         assertThat(events).contains("lead:model_budget_consumed");
+        assertThat(coordinator.modelCalls()).isEqualTo(BoundedCollaborationCoordinator.DEFAULT_POLICY.maxModelCalls());
     }
 
     @Test

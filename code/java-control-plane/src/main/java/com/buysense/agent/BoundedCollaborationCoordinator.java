@@ -18,7 +18,8 @@ import java.util.function.BooleanSupplier;
  * The coordinator, rather than an LLM, owns every capability, graph and budget gate.
  */
 public final class BoundedCollaborationCoordinator {
-    public static final Policy DEFAULT_POLICY = new Policy(18, 12, 4, 4, 6, 1, 90_000);
+    // Six roles plus a bounded allowance for handoff observations and recoverable errors.
+    public static final Policy DEFAULT_POLICY = new Policy(18, 12, 4, 4, 12, 1, 90_000);
 
     private static final Map<String, Set<String>> ALLOWED_DELEGATIONS = Map.ofEntries(
             Map.entry("system", Set.of("lead")),
@@ -110,6 +111,11 @@ public final class BoundedCollaborationCoordinator {
         }
         trace.add(role, "model_budget_consumed", Map.of("used", used, "limit", policy.maxModelCalls()));
         return used;
+    }
+
+    public java.time.Duration remainingTime() {
+        assertActive();
+        return java.time.Duration.ofNanos(Math.max(1, deadlineNanos - System.nanoTime()));
     }
 
     public synchronized DelegationProposal proposeDelegation(

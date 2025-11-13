@@ -593,8 +593,10 @@ public class RunService {
                     "violations", result.metrics().getOrDefault("criticViolations", List.of()),
                     "revisionApplied", execution.revisionApplied()));
             if (cancelled(run, control)) return;
-            run.prepareResult(result, approved ? "proposal" : "needs_replan");
-            complete(run, approved ? "proposal" : "needs_replan");
+            String phase = Boolean.TRUE.equals(result.metrics().get("clarificationRequired"))
+                    ? "clarification" : approved ? "proposal" : "needs_replan";
+            run.prepareResult(result, phase);
+            complete(run, phase);
         } catch (CancellationException ignored) {
             return;
         } catch (RunRepository.LeaseLostException ignored) {

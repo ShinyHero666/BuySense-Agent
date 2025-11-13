@@ -4,18 +4,18 @@ BuySense is a Java 17 and Spring Boot purchase-decision Agent for 3C electronics
 
 ## Architecture
 
-Every request executes the same bounded collaboration chain:
+Every request uses the same bounded collaboration framework:
 
-1. Intent Router parses explicit constraints and proposes retrieval intent.
-2. Search and Ads run concurrently; Recommendation consumes Search evidence.
+1. Intent Router grounds constraints in the original request; unclear requirements return a clarification.
+2. Search and enabled Ads run concurrently; required Recommendation consumes Search evidence.
 3. Search and Recommendation candidates are fused with weighted RRF.
 4. Sponsored candidates pass relevance, quality, fatigue, disclosure, and placement gates.
 5. A compatibility graph enumerates feasible bundles under the budget.
 6. Price, stock, and review evidence are refreshed before confirmation.
-7. A deterministic audit runs before Critic; one bounded revision is allowed.
+7. A deterministic audit runs before Critic; one bounded revision rechecks unresolved Critic issues.
 8. Lead formats the final proposal without creating an order or authorizing payment.
 
-The LLM can supplement soft preferences and rank existing SKUs. Java policy code remains authoritative for category, budget, stock, compatibility, advertising, and transaction constraints.
+The LLM can supplement source-grounded intent and rank existing SKUs. Java policy code remains authoritative for explicit category, budget, stock, compatibility, advertising, and transaction constraints.
 
 ## Engineering Highlights
 
@@ -46,12 +46,15 @@ The gateway validates and stamps provenance before the evidence reaches the Agen
 - Java graders own budget, stock, compatibility, advertising, transaction safety, and trajectory checks. An independent blinded model judge scores only evidence quality and trade-off explanation; selected samples then require blinded human calibration.
 - Controlled runs compare the full bounded Agent with a deterministic no-model baseline and a no-Critic ablation under the same task and data snapshots.
 
-The v2 controlled run completed all 12 tasks x 3 trials x 3 system variants. The full
+The historical v2 controlled run, before the September 5 policy changes, completed
+all 12 tasks x 3 trials x 3 system variants. The full
 bounded-Agent variant passed every deterministic redline and independent model judgment;
 blinded human calibration on four qualitative cases agreed with the judge 4/4. Cohen's Kappa
 is reported as undefined because every human label was PASS. Hidden grading contracts, human
 labels, and raw model reports remain local by design; the repository publishes the task sets,
-evaluation framework, and a non-sensitive loader fixture.
+evaluation framework, and a non-sensitive loader fixture. These historical results
+are not a rerun of the current policy. See [the policy change record](docs/priority-policy-20260905.md)
+for the current regression scope and remaining evaluation limits.
 
 ## Run
 
@@ -72,9 +75,15 @@ The normal suite covers the bounded collaboration chain, retrieval regression, D
 Private capability regression also requires the local hidden grading contract:
 
 ```powershell
-$env:BUYSENSE_LOCAL_CAPABILITY_BENCHMARK='true'
-mvn '-Dtest=BuySenseCapabilityBenchmarkTest' test
+$env:BUYSENSE_PRIORITY_FROZEN_REGRESSION='true'
+mvn '-Dtest=PriorityFrozenTaskRegressionTest' test
 ```
+
+This command retains the original grading contract, reports its results separately,
+and runs a versioned regression contract matching the budget-ceiling policy. The
+independent judge remains UNKNOWN until a real judge is configured. The older
+BuySenseCapabilityBenchmarkTest uses fixed test-only judge labels to verify the
+harness; those labels are not evidence of recommendation quality.
 
 ## Optional Real-Model Evaluation
 

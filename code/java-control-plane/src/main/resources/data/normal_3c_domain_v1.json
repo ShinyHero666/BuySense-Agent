@@ -24,7 +24,7 @@
   "categories": [
     {"id": "phone", "label": "手机", "terms": ["手机", "iphone", "安卓"]},
     {"id": "headphones", "label": "耳机", "terms": ["耳机", "降噪", "音质"]},
-    {"id": "charger", "label": "充电器", "terms": ["充电器", "充电头", "快充"]},
+    {"id": "charger", "label": "充电器", "terms": ["充电器", "充电头", "快充头", "快充"]},
     {"id": "cable", "label": "线材", "terms": ["数据线", "充电线"]},
     {"id": "case", "label": "保护壳", "terms": ["手机壳", "保护壳"]}
   ],

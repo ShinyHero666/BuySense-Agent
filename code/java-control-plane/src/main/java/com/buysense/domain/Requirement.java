@@ -25,6 +25,17 @@ public record Requirement(
         EXPLICIT_USER, INFERRED_MODEL, CATALOG, SYSTEM
     }
 
+    public List<String> excludedBrands() {
+        return constraints.stream().filter(c -> c.field().equals("excludedBrands")
+                        && c.status() == ConstraintStatus.ACTIVE)
+                .map(c -> String.valueOf(c.value())).distinct().toList();
+    }
+
+    public List<String> clarificationQuestions() {
+        return constraints.stream().filter(c -> c.field().equals("clarification"))
+                .map(c -> String.valueOf(c.value())).distinct().toList();
+    }
+
     public enum ConstraintStrength {
         HARD, SOFT
     }

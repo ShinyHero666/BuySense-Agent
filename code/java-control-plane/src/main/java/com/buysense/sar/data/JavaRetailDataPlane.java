@@ -45,10 +45,10 @@ public class JavaRetailDataPlane {
             "preferred_brands", "primary_product_ids", "max_price", "limit",
             "sponsored_allowed", "identity_id", "session_id",
             "personalization_enabled", "recent_product_ids",
-            "excluded_product_ids", "ad_exposure_product_ids");
+            "excluded_product_ids", "ad_exposure_product_ids", "excluded_brands");
     private static final Set<String> REVIEW_FIELDS = Set.of("domain_pack_id", "product_ids");
     private static final Set<String> PAIR_FIELDS = Set.of("product_sku_id", "accessory_sku_id");
-    private static final Set<String> FUSION_FIELDS = Set.of("domain_pack_id", "channels", "limit");
+    private static final Set<String> FUSION_FIELDS = Set.of("domain_pack_id", "channels", "limit", "required_categories");
     private static final Set<String> FUSION_CHANNEL_FIELDS = Set.of("channel", "items", "catalog_version", "quote_version", "data_source");
     private static final Set<String> BUNDLE_FIELDS = Set.of(
             "domain_pack_id", "items", "requested_categories", "use_cases",
@@ -339,7 +339,7 @@ public class JavaRetailDataPlane {
                         throw new JavaDataPlaneValidationException(
                                 "candidate.sponsored", "ads candidates must be disclosed");
                     }
-                    sponsoredScore = Math.max(sponsoredScore, channelScore);
+                    sponsoredScore = Math.max(sponsoredScore, number(candidate, "relevance_score", 0.0));
                     strongestAdQuality = Math.max(strongestAdQuality, adQuality);
                     sponsored = true;
                     sponsoredCandidates.putIfAbsent(sku, candidate);
@@ -348,7 +348,7 @@ public class JavaRetailDataPlane {
                             number(candidate, "normalized_score", 0.0),
                             Math::max);
                 } else {
-                    organicScore = Math.max(organicScore, channelScore);
+                    organicScore = Math.max(organicScore, number(candidate, "relevance_score", 0.0));
                     ObjectNode existingOrganic = organicCandidates.putIfAbsent(sku, candidate);
                     if (existingOrganic != null
                             && channelScore > number(existingOrganic, "channel_score", 0.0)) {
@@ -427,8 +427,35 @@ public class JavaRetailDataPlane {
             if (item == null) continue;
             slate.add(item);
         }
+        // Reserve one organic candidate per required category before global truncation.
+        List<String> requiredCategories = stringList(object, "required_categories", true, 100);
+        for (String category : requiredCategories) {
+            if (!runtime.pack.categories.containsKey(category)) {
+                throw new JavaDataPlaneValidationException("required_categories", "unknown category");
+            }
+            if (slate.stream().anyMatch(item -> category.equals(item.path("category").asText()))) continue;
+            ObjectNode replacement = fused.organicRanking().stream().map(organicCandidates::get)
+                    .filter(item -> item != null && category.equals(item.path("category").asText()))
+                    .findFirst().orElse(null);
+            if (replacement == null) continue;
+            if (slate.size() >= limit) {
+                int removable = -1;
+                for (int index = slate.size() - 1; index >= 0; index--) {
+                    String existingCategory = slate.get(index).path("category").asText();
+                    if (!requiredCategories.contains(existingCategory) || slate.stream()
+                            .filter(item -> existingCategory.equals(item.path("category").asText())).count() > 1) {
+                        removable = index;
+                        break;
+                    }
+                }
+                if (removable < 0) continue;
+                slate.set(removable, replacement);
+                continue;
+            }
+            slate.add(replacement);
+        }
         return Map.of(
-                "fusion_version", "organic-weighted-rrf-v3",
+                "fusion_version", "organic-weighted-rrf-v4-category-coverage",
                 "organic_weight_profile", rrfWeightProfile.profileId(),
                 "calibration_version", rrfWeightProfile.calibrationVersion(),
                 "organic_weights", Map.of(
@@ -440,6 +467,7 @@ public class JavaRetailDataPlane {
                         "organic_relevance_floor_ratio",
                                 sponsoredPolicy.organicRelevanceFloorRatio(),
                         "minimum_ad_quality", sponsoredPolicy.minimumAdQuality(),
+                        "minimum_relevance", SponsoredPlacementPolicy.MINIMUM_RELEVANCE,
                         "insertion_index", sponsoredPolicy.insertionIndex(),
                         "display_slot", sponsoredPolicy.insertionIndex() + 1,
                         "maximum_sponsored", sponsoredPolicy.maximumSponsored(),
@@ -492,7 +520,7 @@ public class JavaRetailDataPlane {
                 ? runtime.pack.primaryCategory
                 : requested.get(0);
         List<String> requiredCategories = "bundle".equals(intent)
-                ? requested.stream().filter(runtime.pack.defaultBundleCategories::contains).toList()
+                ? requested.stream().distinct().toList()
                 : List.of(primaryCategory);
 
         Map<String, List<ObjectNode>> byCategory = new LinkedHashMap<>();
@@ -502,11 +530,11 @@ public class JavaRetailDataPlane {
                     .toList();
             double naturalBest = categoryItems.stream()
                     .filter(item -> !item.path("sponsored").asBoolean())
-                    .mapToDouble(item -> number(item, "normalized_score", 0.0))
+                    .mapToDouble(item -> number(item, "relevance_score", 0.0))
                     .max().orElse(0.0);
             List<ObjectNode> protectedItems = categoryItems.stream()
                     .filter(item -> !item.path("sponsored").asBoolean()
-                            || number(item, "normalized_score", 0.0) >= 0.85 * naturalBest)
+                            || number(item, "relevance_score", 0.0) >= 0.85 * naturalBest)
                     .sorted(Comparator
                             .comparingDouble((ObjectNode item) -> -number(item, "normalized_score", 0.0))
                             .thenComparing(item -> textOr(item, "sku_id", "")))
@@ -540,7 +568,7 @@ public class JavaRetailDataPlane {
         boolean complete = !selected.isEmpty()
                 && castStrings(selected.get(0).get("sku_ids")).size() == requiredCategories.size();
         return Map.of(
-                "optimizer_version", "constraint-enumeration-v3-budget-target",
+                "optimizer_version", "constraint-enumeration-v4-budget-ceiling",
                 "complete", complete,
                 "bundles", selected);
     }
@@ -569,15 +597,12 @@ public class JavaRetailDataPlane {
             if (!eligible(item, request) || !item.category.equals(primaryCategory)) continue;
             double termFit = termFit(runtime.pack, item, request);
             Personalization personalization = personalization(runtime, item, request);
-            double brandFit = request.preferredBrands.contains(item.brand) ? 0.2 : 0.0;
-            double value = request.maxPrice != null && request.maxPrice != 0
-                    ? 0.15 * budgetFitness(request.maxPrice, item.offer.price, 0.85)
-                    : 0.05;
+            double brandFit = request.preferredBrands.contains(item.brand) ? 0.18 : 0.0;
             candidates.add(candidate(item, "search",
-                    0.52 + 0.25 * termFit + brandFit + value + personalization.score,
+                    0.70 * relevance(runtime.pack, item, request) + brandFit + personalization.score,
                     joinReasons(List.of("structured_filter_passed",
                             String.format(Locale.ROOT, "query_term_fit=%.2f", termFit)),
-                            personalization.reasons), runtime));
+                            personalization.reasons), runtime, request));
         }
         return response(runtime, "search", top(candidates, request.limit));
     }
@@ -597,23 +622,19 @@ public class JavaRetailDataPlane {
         for (Item item : runtime.items) {
             if (!eligible(item, request) || !allowed.contains(item.category)
                     || !primaryAccessoryEligible(runtime, item, request)) continue;
-            double termFit = termFit(runtime.pack, item, request);
             Personalization personalization = personalization(runtime, item, request);
-            double universal = "universal".equals(item.ecosystem) ? 0.12 : 0.0;
+            double universal = "universal".equals(item.ecosystem) ? 0.10 : 0.0;
             double peerFit = !peerEcosystems.isEmpty()
                     && ("universal".equals(item.ecosystem) || peerEcosystems.contains(item.ecosystem))
                     ? 0.08 : 0.0;
-            double value = request.maxPrice != null && request.maxPrice != 0
-                    ? 0.18 * (1 - item.offer.price / request.maxPrice)
-                    : 0.05;
             List<String> reasons = new ArrayList<>();
             reasons.add("session_intent_match");
             reasons.add(universal > 0 ? "universal_ecosystem" : "ecosystem_specific");
             reasons.addAll(personalization.reasons);
             if (peerFit > 0) reasons.add("search_peer_context_match");
             candidates.add(candidate(item, "recommendation",
-                    0.42 + 0.25 * termFit + universal + peerFit + value + personalization.score,
-                    reasons, runtime));
+                    0.70 * relevance(runtime.pack, item, request) + universal + peerFit + personalization.score,
+                    reasons, runtime, request));
         }
         return response(runtime, "recommendation",
                 topByCategory(candidates, request.limit, allowed));
@@ -624,10 +645,8 @@ public class JavaRetailDataPlane {
         List<ObjectNode> candidates = new ArrayList<>();
         for (Item item : runtime.items) {
             if (!item.offer.sponsored || !eligible(item, request)) continue;
-            double categoryFit = request.requestedCategories.contains(item.category) ? 1.0 : 0.0;
-            double termFit = termFit(runtime.pack, item, request);
-            double relevance = 0.65 * categoryFit + 0.35 * termFit;
-            if (relevance < 0.45 || item.offer.adQuality < 0.5) continue;
+            double relevance = relevance(runtime.pack, item, request);
+            if (relevance < SponsoredPlacementPolicy.MINIMUM_RELEVANCE || item.offer.adQuality < 0.5) continue;
             double bid = Math.min(1.0, item.offer.adBid / 3.0);
             double exposurePenalty = request.adExposureProductIds.contains(item.spuId) ? 0.2 : 0.0;
             List<String> reasons = new ArrayList<>();
@@ -636,7 +655,7 @@ public class JavaRetailDataPlane {
             if (exposurePenalty > 0) reasons.add("ad_frequency_penalty");
             candidates.add(candidate(item, "ads",
                     0.7 * relevance + 0.2 * item.offer.adQuality + 0.1 * bid - exposurePenalty,
-                    reasons, runtime));
+                    reasons, runtime, request));
         }
         return response(runtime, "ads", top(candidates, request.limit));
     }
@@ -665,11 +684,12 @@ public class JavaRetailDataPlane {
                 booleanDefault(object, "personalization_enabled", true),
                 stringList(object, "recent_product_ids", true, 100),
                 stringList(object, "excluded_product_ids", true, 100),
-                stringList(object, "ad_exposure_product_ids", true, 100));
+                stringList(object, "ad_exposure_product_ids", true, 100),
+                stringList(object, "excluded_brands", true, 100));
     }
 
     private ObjectNode candidate(Item item, String channel, double score,
-                                 Collection<String> reasons, PackRuntime runtime) {
+                                 Collection<String> reasons, PackRuntime runtime, DiscoveryRequest request) {
         ObjectNode out = mapper.createObjectNode();
         out.put("spu_id", item.spuId);
         out.put("product_id", item.spuId);
@@ -705,6 +725,7 @@ public class JavaRetailDataPlane {
         out.put("ad_quality", item.offer.adQuality);
         out.put("channel", channel);
         out.put("channel_score", round6(clamp(score)));
+        out.put("relevance_score", round6(relevance(runtime.pack, item, request)));
         out.put("normalized_score", 0.0);
         ArrayNode reasonArray = out.putArray("reasons");
         reasons.stream().filter(reason -> reason != null).forEach(reasonArray::add);
@@ -749,15 +770,17 @@ public class JavaRetailDataPlane {
     }
 
     private void normalizeScores(List<ObjectNode> selected) {
-        double minimum = selected.stream().mapToDouble(item -> number(item, "channel_score", 0.0))
-                .min().orElse(0.0);
-        double maximum = selected.stream().mapToDouble(item -> number(item, "channel_score", 0.0))
-                .max().orElse(0.0);
         for (ObjectNode item : selected) {
-            item.put("normalized_score", round6(maximum == minimum
-                    ? 1.0
-                    : (number(item, "channel_score", 0.0) - minimum) / (maximum - minimum)));
+            item.put("normalized_score", number(item, "channel_score", 0.0));
         }
+    }
+
+    private double relevance(Pack pack, Item item, DiscoveryRequest request) {
+        double queryFit = termFit(pack, item, request);
+        if (request.useCases.isEmpty()) return queryFit;
+        long matched = request.useCases.stream().filter(useCase -> item.tags.stream()
+                .anyMatch(tag -> tag.contains(useCase) || useCase.contains(tag))).count();
+        return (queryFit + matched / (double) request.useCases.size()) / 2.0;
     }
 
     private double termFit(Pack pack, Item item, DiscoveryRequest request) {
@@ -786,16 +809,16 @@ public class JavaRetailDataPlane {
             if (recent.stream().anyMatch(previous -> previous.brand.equals(item.brand))) shortTerm += 0.08;
             if (recent.stream().anyMatch(previous -> previous.category.equals(item.category))) shortTerm += 0.04;
         }
-        double longTerm = 0.06 * stableAffinity(request.identityId, item.brand);
         List<String> reasons = new ArrayList<>(List.of(
-                String.format(Locale.ROOT, "personalization=%.3f", shortTerm + longTerm)));
+                String.format(Locale.ROOT, "personalization=%.3f", shortTerm)));
         if (shortTerm > 0) reasons.add("session_or_recent_affinity");
-        return new Personalization(shortTerm + longTerm, reasons);
+        return new Personalization(shortTerm, reasons);
     }
 
     private boolean eligible(Item item, DiscoveryRequest request) {
         return item.offer.stock > 0
                 && request.requestedCategories.contains(item.category)
+                && !request.excludedBrands.contains(item.brand)
                 && (request.maxPrice == null || item.offer.price <= request.maxPrice)
                 && !request.excludedProductIds.contains(item.spuId);
     }
@@ -864,15 +887,13 @@ public class JavaRetailDataPlane {
                     .mapToDouble(item -> number(item, "channel_score", 0.0))
                     .average().orElse(0.0);
             int sponsored = (int) combination.stream().filter(item -> item.path("sponsored").asBoolean()).count();
-            double budgetValue = budgetFitness(budget, total, 1.00);
             Map<String, Object> bundle = new LinkedHashMap<>();
             bundle.put("sku_ids", new ArrayList<>(skuIds));
             bundle.put("total_price", round2(total));
             bundle.put("budget_utilization", budget == null || budget == 0
                     ? null : round6(total / budget));
             bundle.put("score", round6(
-                    fusedRelevance + channelRelevance
-                            + 0.32 * budgetValue - 0.04 * sponsored));
+                    fusedRelevance + channelRelevance - 0.04 * sponsored));
             bundle.put("sponsored_count", sponsored);
             bundle.put("compatibility", compatibility);
             output.add(bundle);
@@ -1289,13 +1310,18 @@ public class JavaRetailDataPlane {
         if (sponsored == null || !sponsored.isBoolean()) {
             throw new JavaDataPlaneValidationException(field + ".sponsored", "must be a boolean");
         }
-        for (String optional : List.of("ad_quality", "ad_bid")) {
+        for (String optional : List.of("ad_quality", "ad_bid", "relevance_score")) {
             JsonNode item = copy.get(optional);
             if (item != null && !item.isNull()
                     && (!item.isNumber() || !Double.isFinite(item.asDouble()))) {
                 throw new JavaDataPlaneValidationException(
                         field + "." + optional, "must be a finite number");
             }
+        }
+        JsonNode relevance = copy.get("relevance_score");
+        if (relevance != null && !relevance.isNull()
+                && (relevance.asDouble() < 0 || relevance.asDouble() > 1)) {
+            throw new JavaDataPlaneValidationException(field + ".relevance_score", "must be between zero and one");
         }
         return copy;
     }
@@ -1326,13 +1352,6 @@ public class JavaRetailDataPlane {
         return Math.max(0.0, Math.min(1.0, value));
     }
 
-    private double budgetFitness(Double budget, double total, double targetRatio) {
-        if (budget == null || budget <= 0) return 0.5;
-        double ratio = total / budget;
-        if (ratio > 1.0) return 0.0;
-        return clamp(1.0 - Math.abs(targetRatio - ratio) / targetRatio);
-    }
-
     private double round6(double value) {
         return BigDecimal.valueOf(value).setScale(6, RoundingMode.HALF_UP).doubleValue();
     }
@@ -1347,13 +1366,6 @@ public class JavaRetailDataPlane {
 
     private Map<String, Object> source(String kind, String version, String provider) {
         return Map.of("source", kind, "source_version", version, "provider_id", provider);
-    }
-
-    private double stableAffinity(String identityId, String value) {
-        if (identityId == null || identityId.isBlank()) return 0.0;
-        byte[] digest = sha256((identityId + "|" + value).getBytes(StandardCharsets.UTF_8));
-        int unsigned = ((digest[0] & 0xff) << 8) | (digest[1] & 0xff);
-        return unsigned / 65535.0;
     }
 
     private String sha256Hex(String value) {
@@ -1417,7 +1429,8 @@ public class JavaRetailDataPlane {
             boolean personalizationEnabled,
             List<String> recentProductIds,
             List<String> excludedProductIds,
-            List<String> adExposureProductIds) {
+            List<String> adExposureProductIds,
+            List<String> excludedBrands) {
     }
 
     private record Offer(

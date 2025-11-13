@@ -20,13 +20,14 @@ public class ModelPortAgentBridge implements AgentModelTransport {
     private final ModelPortProperties properties;
     private final ObjectMapper mapper;
     private final RestClient client;
+    private final HttpClient http;
     private volatile String lastStatus;
     private volatile long lastLatencyMs;
 
     public ModelPortAgentBridge(ModelPortProperties properties, ObjectMapper mapper) {
         this.properties = properties;
         this.mapper = mapper;
-        HttpClient http = HttpClient.newBuilder()
+        this.http = HttpClient.newBuilder()
                 .connectTimeout(properties.getConnectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
@@ -42,6 +43,15 @@ public class ModelPortAgentBridge implements AgentModelTransport {
     @Override
     public String mode() {
         return properties.isEnabled() ? "modelport" : "replay";
+    }
+
+    @Override
+    public boolean roleEnabled(String role) {
+        return !properties.isEnabled() || properties.isRoleEnabled(role);
+    }
+
+    public int maxCallsPerRun() {
+        return properties.getMaxCallsPerRun();
     }
 
     @Override
@@ -83,7 +93,12 @@ public class ModelPortAgentBridge implements AgentModelTransport {
             }
             body.put("parallel_tool_calls", false);
 
-            JsonNode response = client.post()
+            Duration timeout = request.timeout().compareTo(properties.getReadTimeout()) < 0
+                    ? request.timeout() : properties.getReadTimeout();
+            timeout = Duration.ofMillis(Math.max(1, timeout.toMillis()));
+            JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(http);
+            requestFactory.setReadTimeout(timeout);
+            JsonNode response = client.mutate().requestFactory(requestFactory).build().post()
                     .uri("/v1/chat/completions")
                     .header("x-api-key", properties.getApiKey())
                     .header("Authorization", "Bearer " + properties.getApiKey())
@@ -128,7 +143,10 @@ public class ModelPortAgentBridge implements AgentModelTransport {
             lastStatus = "degraded";
             lastLatencyMs = elapsed(started);
             throw new AgentModelTransport.UnavailableException(
-                    "model transport failed: " + error.getClass().getSimpleName());
+                    "model transport failed: " + error.getClass().getSimpleName(),
+                    error instanceof org.springframework.web.client.ResourceAccessException
+                            || error instanceof org.springframework.web.client.RestClientResponseException responseError
+                            && responseError.getStatusCode().is5xxServerError());
         }
     }
 

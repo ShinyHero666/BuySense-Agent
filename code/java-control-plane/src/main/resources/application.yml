@@ -52,7 +52,7 @@ buysense:
       lead: ${BUYSENSE_MODELPORT_MODEL_LEAD:${BUYSENSE_MODELPORT_MODEL:qwen-default}}
     connect-timeout: 1s
     read-timeout: 45s
-    max-calls-per-run: 6
+    max-calls-per-run: ${BUYSENSE_MODELPORT_MAX_CALLS_PER_RUN:12}
     max-tokens-per-call: 768
     thinking-mode: ${BUYSENSE_MODELPORT_THINKING_MODE:disabled}
     disabled-roles: ${BUYSENSE_MODELPORT_DISABLED_ROLES:}

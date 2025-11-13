@@ -186,7 +186,7 @@ class JavaRetailDataPlaneTest {
         fusionInput.put("channels", List.of(search, recommend, ads));
         fusionInput.put("limit", 8);
         Map<String, Object> fused = plane.fuse("normal-3c-v1", mapper.valueToTree(fusionInput));
-        assertEquals("organic-weighted-rrf-v3", fused.get("fusion_version"));
+        assertEquals("organic-weighted-rrf-v4-category-coverage", fused.get("fusion_version"));
         assertEquals("commerce-organic-rrf-v2", fused.get("organic_weight_profile"));
         assertEquals("offline-organic-golden-v2", fused.get("calibration_version"));
         assertEquals(Map.of("search", 1.0, "recommendation", 0.9), fused.get("organic_weights"));
@@ -223,12 +223,12 @@ class JavaRetailDataPlaneTest {
         bundleInput.put("budget_max", 7000);
         Map<String, Object> bundles = plane.bundles(
                 "normal-3c-v1", mapper.valueToTree(bundleInput));
-        assertEquals("constraint-enumeration-v3-budget-target", bundles.get("optimizer_version"));
+        assertEquals("constraint-enumeration-v4-budget-ceiling", bundles.get("optimizer_version"));
         assertEquals(true, bundles.get("complete"));
         List<Map<String, Object>> bundleResults = asMaps((List<?>) bundles.get("bundles"));
         assertFalse(bundleResults.isEmpty());
         double topBundlePrice = ((Number) bundleResults.get(0).get("total_price")).doubleValue();
-        assertTrue(topBundlePrice >= 4550 && topBundlePrice <= 7000);
+        assertTrue(topBundlePrice > 0 && topBundlePrice <= 7000);
     }
 
     @Test

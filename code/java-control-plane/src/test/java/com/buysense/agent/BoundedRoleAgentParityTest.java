@@ -227,6 +227,81 @@ class BoundedRoleAgentParityTest {
         assertThat(artifacts.list()).isEmpty();
     }
 
+    @Test
+    void malformedToolCallsCannotLoopBeyondFourTurns() {
+        var invalid = completion(toolCall("invalid", "unknown_tool", Map.of()));
+        ScriptedTransport transport = new ScriptedTransport(invalid, invalid, invalid, invalid, invalid);
+        var coordinator = new BoundedCollaborationCoordinator("bounded-errors", (r, e, d) -> { });
+        var result = runOneRole(transport, coordinator);
+        assertThat(transport.requests).hasSize(4);
+        assertThat(coordinator.modelCalls()).isEqualTo(4);
+        assertThat(result.outcome()).isEqualTo(BoundedRoleAgent.Outcome.FALLBACK);
+        assertThat(result.roleCall().error()).isEqualTo("role_turn_limit_exhausted");
+    }
+
+    @Test
+    void actualCallsConsumeTheSharedBudgetIncludingToolRepair() {
+        var invalid = completion(toolCall("invalid", "unknown_tool", Map.of()));
+        ScriptedTransport transport = new ScriptedTransport(invalid, invalid, invalid);
+        var coordinator = new BoundedCollaborationCoordinator("call-budget", (r, e, d) -> { },
+                new BoundedCollaborationCoordinator.Policy(18, 12, 4, 4, 2, 1, 90_000));
+        var result = runOneRole(transport, coordinator);
+        assertThat(transport.requests).hasSize(2);
+        assertThat(coordinator.modelCalls()).isEqualTo(2);
+        assertThat(result.outcome()).isEqualTo(BoundedRoleAgent.Outcome.FALLBACK);
+        assertThat(transport.requests).allSatisfy(request ->
+                assertThat(request.timeout()).isPositive().isLessThanOrEqualTo(java.time.Duration.ofSeconds(90)));
+    }
+
+    @Test
+    void retriesOneTransientFailureAndCountsBothAttempts() {
+        AtomicInteger attempts = new AtomicInteger();
+        AgentModelTransport transport = request -> {
+            if (attempts.incrementAndGet() == 1) throw new AgentModelTransport.UnavailableException("503", true);
+            return completion(toolCall("publish", "publish_artifact", Map.of("payload", "{}")));
+        };
+        var coordinator = new BoundedCollaborationCoordinator("transient", (r, e, d) -> { });
+        assertThat(runOneRole(transport, coordinator).outcome()).isEqualTo(BoundedRoleAgent.Outcome.ACCEPTED);
+        assertThat(attempts).hasValue(2);
+        assertThat(coordinator.modelCalls()).isEqualTo(2);
+    }
+
+    @Test
+    void doesNotRetryPermanentFailuresAndStopsAfterTwoTransientFailures() {
+        for (boolean retryable : List.of(false, true)) {
+            AtomicInteger attempts = new AtomicInteger();
+            AgentModelTransport transport = request -> {
+                attempts.incrementAndGet();
+                throw new AgentModelTransport.UnavailableException("unavailable", retryable);
+            };
+            var coordinator = new BoundedCollaborationCoordinator("failed-" + retryable, (r, e, d) -> { });
+            assertThat(runOneRole(transport, coordinator).outcome()).isEqualTo(BoundedRoleAgent.Outcome.FALLBACK);
+            assertThat(attempts).hasValue(retryable ? 2 : 1);
+            assertThat(coordinator.modelCalls()).isEqualTo(attempts.get());
+        }
+    }
+
+    @Test
+    void disabledRolesDoNotConsumeRemoteCallBudget() {
+        ModelPortProperties properties = new ModelPortProperties();
+        properties.setEnabled(true);
+        properties.setDisabledRoles(Set.of("search"));
+        var coordinator = new BoundedCollaborationCoordinator("disabled", (r, e, d) -> { });
+        var result = runOneRole(new ModelPortAgentBridge(properties, mapper), coordinator);
+        assertThat(coordinator.modelCalls()).isZero();
+        assertThat(result.roleCall().attempted()).isFalse();
+        assertThat(result.outcome()).isEqualTo(BoundedRoleAgent.Outcome.FALLBACK);
+    }
+
+    private BoundedRoleAgent.Result runOneRole(AgentModelTransport transport,
+                                              BoundedCollaborationCoordinator coordinator) {
+        var role = new BoundedRoleAgent(transport, mapper, new ArtifactStore("test-run"),
+                coordinator, (r, e, d) -> { });
+        return role.run(new BoundedRoleAgent.Spec("search", "test-run", "task", "candidate_set",
+                AgentArtifact.Status.VERIFIED, mapper.createObjectNode(), null, "{}", "Search",
+                (input, proposal) -> BoundedRoleAgent.Resolution.accepted(proposal), input -> input));
+    }
+
     private AgentModelTransport.Completion completion(AgentModelTransport.ToolCall call) {
         return new AgentModelTransport.Completion(
                 null, List.of(call), new AgentModelTransport.Usage(10, 3, 13));

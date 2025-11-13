@@ -82,7 +82,7 @@ class JavaDataPlaneControllerTest {
         bundleRequest.put("budget_max", 7000);
         bundleRequest.put("top_n", 3);
         assertThat(postJson("/api/v2/decision/bundles", bundleRequest)
-                .path("optimizer_version").asText()).isEqualTo("constraint-enumeration-v3-budget-target");
+                .path("optimizer_version").asText()).isEqualTo("constraint-enumeration-v4-budget-ceiling");
     }
 
     @Test
