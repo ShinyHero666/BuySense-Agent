@@ -371,6 +371,11 @@ curl -fsS http://127.0.0.1:19090/health/ready
 docker compose -f compose.v2.yaml down
 ```
 
+基础 `compose.v2.yaml` 是无凭据的离线质量门禁，固定使用 Replay 与静态零售快照。
+通用 HTTP 或 Shopify provider 请改用 `bash scripts/run-sar-agent.sh --http-data`；
+该入口只把当前 provider 的凭据传给 Python 数据面，并在凭据或 fallback 策略变化时
+要求停止旧栈后重启。
+
 其中控制面包含 React 构建产物、Pi Agent 和 SQLite Run 状态，数据面提供 Search、Recommendation、Ads、融合、组合、兼容、评论与 Quote。`k8s/v2.yaml` 明确将 SQLite 控制面限制为单副本。
 
 以下入口属于 Legacy 教材。Docker Compose 使用主机端口 18080，避免常见的 8080 冲突：

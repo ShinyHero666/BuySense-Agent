@@ -1,6 +1,6 @@
 # 从这里开始：墨圆智选新生指南
 
-这份指南面向第一次接触搜广推和 Agent 的学生。你不需要 GPU、本地大模型、ModelPort 或 API Key，也能先跑通完整的 V2 决策工作台。
+这份指南面向第一次运行本项目的搜广推与 Agent 工程师，也可作为学生实验入口。你不需要 GPU、本地大模型、ModelPort 或 API Key，也能先跑通完整的 V2 决策工作台。
 
 ## 1. 你会看到什么
 
@@ -17,7 +17,7 @@
 
 Agent 负责理解、选择、协调和解释；召回、排序、预算、广告合规、兼容性与价格仍由确定性算法服务负责。
 
-当前演示数据使用 3C Domain Pack，但系统不是“二手平台 Agent”或“只能卖 3C 的 Agent”。品类、用途、品牌别名和默认套装集中在 `code/src/shoprec/data/normal_3c_domain_v1.json`；扩展新垂类时应新增版本化 Domain Pack 和对应契约/评测，不要把行业词继续散落到编排代码中。
+工作台可在 `normal-3c-v1` 与 `outdoor-camping-v1` 之间切换；领域选择会随 Run 持久化并进入审计事件。两者共用同一套 Capability / Workflow Registry、编排器、契约和 UI。新增同工作流垂类时只提交版本化 Domain Pack 资产，不把行业词散落到 core；完整方法见 [Domain Pack 扩展指南](./docs/DOMAIN_PACKS.md)。
 
 ## 2. 首次运行要求
 
@@ -29,7 +29,7 @@ Agent 负责理解、选择、协调和解释；召回、排序、预算、广�
 | npm | 随 Node.js 安装 | 首次下载锁定依赖 |
 | curl | 任意近期版本 | 健康检查 |
 
-默认离线模式不需要 Docker、GPU、ModelPort 或密钥。第一次安装 Node 依赖需要能够访问 NPM 仓库。
+默认离线模式不需要 Docker、GPU、ModelPort 或密钥。它强制使用仓库内确定性零售快照并关闭 fallback，不访问 Catalog、Review 或 Pricing 上游。第一次安装 Node 依赖需要能够访问 NPM 仓库。
 
 ## 3. 五分钟跑通离线 V2
 
@@ -47,7 +47,7 @@ bash code/scripts/run-sar-agent.sh --offline
 Search-ads-recs Agent is listening on http://127.0.0.1:19090
 ```
 
-打开 <http://127.0.0.1:19090/>。选择“套装决策”并点击“开始决策”，然后依次查看：
+打开 <http://127.0.0.1:19090/>。先选择 3C 或户外露营 Domain Pack，再选择示例并点击“开始决策”，然后依次查看：
 
 1. 约束雷达：预算、品类和偏好来自哪里。
 2. 搜推广融合：三个通道分别贡献了多少候选。
@@ -55,22 +55,37 @@ Search-ads-recs Agent is listening on http://127.0.0.1:19090
 4. 协作拓扑：Agent 如何委派任务。
 5. 质量与运行：离线质量门禁和服务健康。
 
-离线模式会明确显示 `replay`。它使用确定性模型替身验证工作流，不是假装调用了真实大模型。按 `Ctrl+C` 会同时停止本次启动的数据面和控制面。
+离线模式会明确显示 `replay`，质量页还会把三个零售来源标为 `local_snapshot`。它使用确定性模型替身和静态零售快照验证工作流，不是假装调用了真实模型或真实商品数据。按 `Ctrl+C` 会同时停止本次启动的数据面和控制面。
 
-## 4. 再连接本地千问
+## 4. 单独验收真实零售数据
+
+如果已有兼容的 Catalog / Review / Pricing HTTP provider，可以保持 Pi Replay 不变，只切换数据源：
+
+```bash
+cp code/.env.example code/.env
+# 填写 MOYUAN_RETAIL_DATA_BASE_URL；需要鉴权时再填写 scoped API key。
+bash code/scripts/run-sar-agent.sh --http-data --check
+bash code/scripts/run-sar-agent.sh --http-data
+```
+
+HTTP 模式默认失败关闭，不会悄悄使用本地样本。只有明确设置
+`MOYUAN_RETAIL_DATA_FALLBACK_ENABLED=true` 才允许降级；质量页会显示实际来源、版本、脱敏 provider 标识、请求/错误/降级计数和 fallback 状态。完整 provider 契约与健康语义见[控制面 README](./code/agent-control-plane/README.md)。
+
+## 5. 再连接本地千问
 
 完成离线路径后，再尝试真实模型。前提是 ModelPort 已在本机提供兼容端点和 scoped client key：
 
 ```bash
 cp code/.env.example code/.env
-# 编辑 code/.env，只填写 ModelPort client key，不要填写 Provider key。
+# 编辑 code/.env：模型侧只填写 ModelPort client key，不要填写原始模型 Provider key；
+# 零售数据侧仅可填写 scoped read-only key。
 bash code/scripts/run-sar-agent.sh --local-qwen --check
 bash code/scripts/run-sar-agent.sh --local-qwen
 ```
 
 也可以直接导出 `MOYUAN_MODELPORT_API_KEY`，或用 `MODELPORT_ENV_FILE` 指向受控配置文件。真实模式只是替换 LLM 角色运行时，硬约束、算法服务和安全门禁保持不变。
 
-## 5. 推荐学习顺序
+## 6. 推荐学习顺序
 
 1. 阅读[术语表](./docs/GLOSSARY.md)，先认识十个核心词。
 2. 阅读[V2 代码导览](./docs/V2_CODE_TOUR.md)，跟踪一条请求。
@@ -79,7 +94,7 @@ bash code/scripts/run-sar-agent.sh --local-qwen
 5. 有 Docker 时运行 V2 镜像烟测：`bash scripts/test-v2-containers.sh`。
 6. 最后再选择性阅读根目录下标记为 Legacy 的传统搜推课程。
 
-## 6. 遇到问题
+## 7. 遇到问题
 
 先执行：
 

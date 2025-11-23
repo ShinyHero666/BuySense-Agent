@@ -55,7 +55,9 @@ TypeScript 的 [`fusion.ts`](../code/agent-control-plane/src/fusion.ts) 是同�
 - Run 与 SSE 恢复：[`v2-runs.ts`](../code/agent-control-plane/src/v2-runs.ts)
 - 确认与购物车草案：[`cart-agent.ts`](../code/agent-control-plane/src/cart-agent.ts)
 
-先理解“身份隔离、幂等、TTL、取消、恢复”五个行为，再看表结构。
+先理解“身份隔离、幂等、TTL、取消、恢复”五个行为，再看表结构。确认必须绑定 `proposalRunId`；同一方案的不同重试解析到同一确认 Run。失败或取消后，只有原 pending proposal 仍在 TTL 内且未被替换时，新 key 才会开启该 Run 的下一 attempt。公开 SSE 与工作台默认只重放当前 attempt，完整历史保留在 SQLite 事件账本。
+
+报价刷新不持有数据库锁，最终以一个短事务提交 pending 消费、草案、Run 终态和 terminal event。普通方案的 pending 发布或按 generation 清理、约束、Run 终态与 terminal event 也在同一事务。Run 创建与首事件、Trace 投影与 ledger event 采用相同的原子写入边界。执行前必须取得 lease，后续 Trace、方案发布和终态写入都校验 fencing token；取消先持久化终态，再以 `AbortSignal` 停止融合、兼容、报价与评论调用。未响应取消的旧 attempt 仍计入容量，SSE 从共享 SQLite ledger 增量补齐事件；这些机制支持发布时的短暂进程重叠，但不改变 SQLite 单副本部署约束。
 
 ## 6. 前端如何展示证据
 
