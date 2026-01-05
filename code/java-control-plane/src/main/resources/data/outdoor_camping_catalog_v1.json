@@ -21,7 +21,7 @@
           "offers": [
             {
               "offer_id": "offer-trailforge-alpine-stove-self",
-              "seller_id": "moyuan-outdoor-self",
+              "seller_id": "buysense-outdoor-self",
               "price": 329,
               "currency": "CNY",
               "stock": 28,
@@ -106,7 +106,7 @@
           "offers": [
             {
               "offer_id": "offer-easyflame-butane-cassette-self",
-              "seller_id": "moyuan-outdoor-self",
+              "seller_id": "buysense-outdoor-self",
               "price": 25,
               "currency": "CNY",
               "stock": 160,
@@ -133,7 +133,7 @@
           "offers": [
             {
               "offer_id": "offer-ridgecook-titanium-pot-self",
-              "seller_id": "moyuan-outdoor-self",
+              "seller_id": "buysense-outdoor-self",
               "price": 259,
               "currency": "CNY",
               "stock": 35,
@@ -193,7 +193,7 @@
         "protocols": ["lindal-valve", "cookware-direct"],
         "offers": [{
           "offer_id": "offer-summitflow-regulator-stove-self",
-          "seller_id": "moyuan-outdoor-benchmark",
+          "seller_id": "buysense-outdoor-benchmark",
           "price": 529,
           "currency": "CNY",
           "stock": 34,
@@ -221,7 +221,7 @@
         "protocols": ["lindal-valve", "cookware-direct"],
         "offers": [{
           "offer_id": "offer-ridgewind-trek-stove-self",
-          "seller_id": "moyuan-outdoor-benchmark",
+          "seller_id": "buysense-outdoor-benchmark",
           "price": 419,
           "currency": "CNY",
           "stock": 47,
@@ -249,7 +249,7 @@
         "protocols": ["lindal-valve"],
         "offers": [{
           "offer_id": "offer-summitfuel-four-season-self",
-          "seller_id": "moyuan-outdoor-benchmark",
+          "seller_id": "buysense-outdoor-benchmark",
           "price": 69,
           "currency": "CNY",
           "stock": 150,
@@ -277,7 +277,7 @@
         "protocols": ["lindal-valve"],
         "offers": [{
           "offer_id": "offer-ridgetrek-standard-gas-self",
-          "seller_id": "moyuan-outdoor-benchmark",
+          "seller_id": "buysense-outdoor-benchmark",
           "price": 39,
           "currency": "CNY",
           "stock": 182,
@@ -306,7 +306,7 @@
         "protocols": ["cookware-direct"],
         "offers": [{
           "offer_id": "offer-alpinecook-titanium-pot-self",
-          "seller_id": "moyuan-outdoor-benchmark",
+          "seller_id": "buysense-outdoor-benchmark",
           "price": 279,
           "currency": "CNY",
           "stock": 61,
@@ -335,7 +335,7 @@
         "protocols": ["cookware-direct"],
         "offers": [{
           "offer_id": "offer-duotitan-cookset-self",
-          "seller_id": "moyuan-outdoor-benchmark",
+          "seller_id": "buysense-outdoor-benchmark",
           "price": 319,
           "currency": "CNY",
           "stock": 39,

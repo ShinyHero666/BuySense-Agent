@@ -1,14 +1,14 @@
 server:
-  port: ${MOYUAN_PORT:19090}
+  port: ${BUYSENSE_PORT:19090}
   shutdown: graceful
 
 spring:
   application:
     name: buysense-java
   datasource:
-    url: ${MOYUAN_DB_URL:jdbc:h2:file:./data/buysense;MODE=PostgreSQL;AUTO_SERVER=TRUE;DATABASE_TO_LOWER=TRUE}
-    username: ${MOYUAN_DB_USERNAME:sa}
-    password: ${MOYUAN_DB_PASSWORD:}
+    url: ${BUYSENSE_DB_URL:jdbc:h2:file:./data/buysense;MODE=PostgreSQL;AUTO_SERVER=TRUE;DATABASE_TO_LOWER=TRUE}
+    username: ${BUYSENSE_DB_USERNAME:sa}
+    password: ${BUYSENSE_DB_PASSWORD:}
     hikari:
       maximum-pool-size: 8
   flyway:
@@ -25,24 +25,24 @@ management:
         include: health,info,metrics,prometheus
 
 buysense:
-  session-secret: ${MOYUAN_SESSION_SECRET:local-development-secret-change-me}
+  session-secret: ${BUYSENSE_SESSION_SECRET:local-development-secret-change-me}
   runs:
-    max-concurrent: ${MOYUAN_RUN_MAX_CONCURRENT:16}
-    queue-capacity: ${MOYUAN_RUN_QUEUE_CAPACITY:256}
-    max-active-per-identity: ${MOYUAN_RUN_MAX_ACTIVE_PER_IDENTITY:3}
-    max-created-per-minute: ${MOYUAN_RUN_MAX_CREATED_PER_MINUTE:30}
-    lease-duration: ${MOYUAN_RUN_LEASE_DURATION:2m}
-    lease-renewal-delay: ${MOYUAN_RUN_LEASE_RENEWAL_DELAY:30s}
-    recovery-initial-delay: ${MOYUAN_RUN_RECOVERY_INITIAL_DELAY:5s}
-    recovery-delay: ${MOYUAN_RUN_RECOVERY_DELAY:30s}
-    cleanup-delay: ${MOYUAN_RUN_CLEANUP_DELAY:1h}
-    proposal-ttl: ${MOYUAN_PROPOSAL_TTL:15m}
-    terminal-retention: ${MOYUAN_RUN_RETENTION:30d}
+    max-concurrent: ${BUYSENSE_RUN_MAX_CONCURRENT:16}
+    queue-capacity: ${BUYSENSE_RUN_QUEUE_CAPACITY:256}
+    max-active-per-identity: ${BUYSENSE_RUN_MAX_ACTIVE_PER_IDENTITY:3}
+    max-created-per-minute: ${BUYSENSE_RUN_MAX_CREATED_PER_MINUTE:30}
+    lease-duration: ${BUYSENSE_RUN_LEASE_DURATION:2m}
+    lease-renewal-delay: ${BUYSENSE_RUN_LEASE_RENEWAL_DELAY:30s}
+    recovery-initial-delay: ${BUYSENSE_RUN_RECOVERY_INITIAL_DELAY:5s}
+    recovery-delay: ${BUYSENSE_RUN_RECOVERY_DELAY:30s}
+    cleanup-delay: ${BUYSENSE_RUN_CLEANUP_DELAY:1h}
+    proposal-ttl: ${BUYSENSE_PROPOSAL_TTL:15m}
+    terminal-retention: ${BUYSENSE_RUN_RETENTION:30d}
   modelport:
-    enabled: ${MOYUAN_MODELPORT_ENABLED:false}
-    base-url: ${MOYUAN_MODELPORT_URL:http://127.0.0.1:38082}
-    api-key: ${MOYUAN_MODELPORT_KEY:dev-client-key}
-    model: ${MOYUAN_MODELPORT_MODEL:qwen-default}
+    enabled: ${BUYSENSE_MODELPORT_ENABLED:false}
+    base-url: ${BUYSENSE_MODELPORT_URL:http://127.0.0.1:38082}
+    api-key: ${BUYSENSE_MODELPORT_KEY:dev-client-key}
+    model: ${BUYSENSE_MODELPORT_MODEL:qwen-default}
     connect-timeout: 1s
     read-timeout: 45s
     max-calls-per-run: 6
@@ -53,21 +53,21 @@ buysense:
       - headphones
       - charger
   retail-provider:
-    enabled: ${MOYUAN_RETAIL_PROVIDER_ENABLED:false}
-    base-url: ${MOYUAN_RETAIL_PROVIDER_URL:}
-    api-key: ${MOYUAN_RETAIL_PROVIDER_KEY:}
-    fallback-enabled: ${MOYUAN_RETAIL_FALLBACK_ENABLED:false}
-    allow-insecure-http: ${MOYUAN_RETAIL_ALLOW_INSECURE_HTTP:false}
+    enabled: ${BUYSENSE_RETAIL_PROVIDER_ENABLED:false}
+    base-url: ${BUYSENSE_RETAIL_PROVIDER_URL:}
+    api-key: ${BUYSENSE_RETAIL_PROVIDER_KEY:}
+    fallback-enabled: ${BUYSENSE_RETAIL_FALLBACK_ENABLED:false}
+    allow-insecure-http: ${BUYSENSE_RETAIL_ALLOW_INSECURE_HTTP:false}
     connect-timeout: 1s
     read-timeout: 2s
     max-response-bytes: 1048576
   shopify:
-    enabled: ${MOYUAN_SHOPIFY_ENABLED:false}
-    store-domain: ${MOYUAN_SHOPIFY_STORE_DOMAIN:}
-    admin-access-token: ${MOYUAN_SHOPIFY_ADMIN_ACCESS_TOKEN:}
-    api-version: ${MOYUAN_SHOPIFY_API_VERSION:2026-07}
-    fallback-enabled: ${MOYUAN_SHOPIFY_FALLBACK_ENABLED:false}
+    enabled: ${BUYSENSE_SHOPIFY_ENABLED:false}
+    store-domain: ${BUYSENSE_SHOPIFY_STORE_DOMAIN:}
+    admin-access-token: ${BUYSENSE_SHOPIFY_ADMIN_ACCESS_TOKEN:}
+    api-version: ${BUYSENSE_SHOPIFY_API_VERSION:2026-07}
+    fallback-enabled: ${BUYSENSE_SHOPIFY_FALLBACK_ENABLED:false}
     connect-timeout: 1s
     read-timeout: 2s
     max-response-bytes: 1048576
-    catalog-cache-ttl: ${MOYUAN_SHOPIFY_CATALOG_CACHE_TTL:5m}
+    catalog-cache-ttl: ${BUYSENSE_SHOPIFY_CATALOG_CACHE_TTL:5m}

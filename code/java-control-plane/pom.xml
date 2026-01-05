@@ -11,7 +11,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.moyuan</groupId>
+    <groupId>com.buysense</groupId>
     <artifactId>buysense-java</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>BuySense Java</name>
@@ -68,10 +68,6 @@
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
-            </resource>
-            <resource>
-                <directory>../apps/commerce-console/dist</directory>
-                <targetPath>static</targetPath>
             </resource>
         </resources>
         <plugins>

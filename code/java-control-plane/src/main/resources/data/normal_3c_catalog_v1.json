@@ -22,7 +22,7 @@
           "offers": [
             {
               "offer_id": "offer-iphone-15-128-blue-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 5299,
               "currency": "CNY",
               "stock": 32,
@@ -41,7 +41,7 @@
           "offers": [
             {
               "offer_id": "offer-iphone-15-256-black-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 5899,
               "currency": "CNY",
               "stock": 21,
@@ -69,7 +69,7 @@
           "offers": [
             {
               "offer_id": "offer-xiaomi-14-256-black-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 3999,
               "currency": "CNY",
               "stock": 25,
@@ -99,7 +99,7 @@
           "offers": [
             {
               "offer_id": "offer-honor-200-256-green-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 2799,
               "currency": "CNY",
               "stock": 18,
@@ -126,7 +126,7 @@
           "offers": [
             {
               "offer_id": "offer-airpods-pro-2-usbc-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 1599,
               "currency": "CNY",
               "stock": 41,
@@ -153,7 +153,7 @@
           "offers": [
             {
               "offer_id": "offer-soundcore-liberty-black-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 499,
               "currency": "CNY",
               "stock": 76,
@@ -180,7 +180,7 @@
           "offers": [
             {
               "offer_id": "offer-xiaomi-buds-white-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 699,
               "currency": "CNY",
               "stock": 54,
@@ -210,7 +210,7 @@
           "offers": [
             {
               "offer_id": "offer-apple-charger-20w-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 129,
               "currency": "CNY",
               "stock": 90,
@@ -238,7 +238,7 @@
           "offers": [
             {
               "offer_id": "offer-ugreen-gan-65w-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 199,
               "currency": "CNY",
               "stock": 63,
@@ -268,7 +268,7 @@
           "offers": [
             {
               "offer_id": "offer-xiaomi-charger-90w-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 299,
               "currency": "CNY",
               "stock": 38,
@@ -296,7 +296,7 @@
           "offers": [
             {
               "offer_id": "offer-camera-charger-sponsored-self",
-              "seller_id": "moyuan-self",
+              "seller_id": "buysense-self",
               "price": 99,
               "currency": "CNY",
               "stock": 99,
@@ -330,7 +330,7 @@
         "max_power_watts": 65,
         "offers": [{
           "offer_id": "offer-nova-creator-ultra-512-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 6299,
           "currency": "CNY",
           "stock": 24,
@@ -360,7 +360,7 @@
         "max_power_watts": 80,
         "offers": [{
           "offer_id": "offer-lumina-portrait-x7-pro-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 4499,
           "currency": "CNY",
           "stock": 41,
@@ -390,7 +390,7 @@
         "max_power_watts": 65,
         "offers": [{
           "offer_id": "offer-atlas-zoom-pro-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 5599,
           "currency": "CNY",
           "stock": 18,
@@ -420,7 +420,7 @@
         "max_power_watts": 66,
         "offers": [{
           "offer_id": "offer-endura-max-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 3299,
           "currency": "CNY",
           "stock": 56,
@@ -482,7 +482,7 @@
         "max_power_watts": 45,
         "offers": [{
           "offer_id": "offer-compact-s-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 2299,
           "currency": "CNY",
           "stock": 72,
@@ -510,7 +510,7 @@
         "protocols": ["bluetooth-aac"],
         "offers": [{
           "offer_id": "offer-clearsound-travel-anc-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 399,
           "currency": "CNY",
           "stock": 88,
@@ -538,7 +538,7 @@
         "protocols": ["bluetooth-aac", "usb-audio"],
         "offers": [{
           "offer_id": "offer-studiopods-creator-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 899,
           "currency": "CNY",
           "stock": 44,
@@ -567,7 +567,7 @@
         "max_power_watts": 65,
         "offers": [{
           "offer_id": "offer-voltedge-gan-65w-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 249,
           "currency": "CNY",
           "stock": 96,
@@ -596,7 +596,7 @@
         "max_power_watts": 45,
         "offers": [{
           "offer_id": "offer-travelcube-45w-self",
-          "seller_id": "moyuan-benchmark-self",
+          "seller_id": "buysense-benchmark-self",
           "price": 159,
           "currency": "CNY",
           "stock": 110,

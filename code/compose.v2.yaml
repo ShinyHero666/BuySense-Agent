@@ -1,52 +1,25 @@
-name: moyuan-sar-agent-v2
+name: buysense
 
 services:
-  discovery:
+  app:
     build:
       context: .
-      dockerfile: docker/Dockerfile.discovery
+      dockerfile: Dockerfile
     environment:
-      SHOPREC_HOST: 0.0.0.0
-      SHOPREC_PORT: 18083
-      MOYUAN_AGENT_MODEL_MODE: replay
-      # The base Compose topology is an offline quality gate. Credentialed
-      # providers use run-sar-agent.sh, which can pass only the active provider.
-      MOYUAN_RETAIL_DATA_MODE: static
-      MOYUAN_RETAIL_DATA_PROVIDER: generic
-      MOYUAN_RETAIL_DATA_FALLBACK_ENABLED: "false"
-    ports:
-      - "18083:18083"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18083/health/ready', timeout=1)"]
-      interval: 10s
-      timeout: 2s
-      retries: 3
-
-  control-plane:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.control-plane
-    depends_on:
-      discovery:
-        condition: service_healthy
-    environment:
-      MOYUAN_CONTROL_HOST: 0.0.0.0
-      MOYUAN_CONTROL_PORT: 19090
-      MOYUAN_DATABASE_PATH: /app/code/.runtime/commerce-agent.sqlite
-      MOYUAN_DISCOVERY_MODE: python
-      MOYUAN_DISCOVERY_BASE_URL: http://discovery:18083
-      MOYUAN_AGENT_MODEL_MODE: replay
-      MOYUAN_SECURE_COOKIE: ${MOYUAN_SECURE_COOKIE:-false}
-      MOYUAN_ENABLE_V1_API: "false"
+      BUYSENSE_PORT: 19090
+      BUYSENSE_DB_URL: jdbc:h2:file:/app/data/buysense;MODE=PostgreSQL;AUTO_SERVER=TRUE;DATABASE_TO_LOWER=TRUE
+      BUYSENSE_SESSION_SECRET: ${BUYSENSE_SESSION_SECRET:-local-development-secret-change-me}
+      BUYSENSE_MODELPORT_ENABLED: ${BUYSENSE_MODELPORT_ENABLED:-false}
+      BUYSENSE_MODELPORT_URL: ${BUYSENSE_MODELPORT_URL:-https://api.deepseek.com}
+      BUYSENSE_MODELPORT_KEY: ${BUYSENSE_MODELPORT_KEY:-}
+      BUYSENSE_MODELPORT_MODEL: ${BUYSENSE_MODELPORT_MODEL:-deepseek-chat}
+      BUYSENSE_SHOPIFY_ENABLED: ${BUYSENSE_SHOPIFY_ENABLED:-false}
+      BUYSENSE_SHOPIFY_STORE_DOMAIN: ${BUYSENSE_SHOPIFY_STORE_DOMAIN:-}
+      BUYSENSE_SHOPIFY_ADMIN_ACCESS_TOKEN: ${BUYSENSE_SHOPIFY_ADMIN_ACCESS_TOKEN:-}
     ports:
       - "19090:19090"
     volumes:
-      - moyuan-runtime:/app/code/.runtime
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:19090/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
+      - buysense-data:/app/data
 
 volumes:
-  moyuan-runtime:
+  buysense-data:

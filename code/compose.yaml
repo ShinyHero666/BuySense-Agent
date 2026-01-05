@@ -1,24 +1,25 @@
+name: buysense
+
 services:
-  shoprec:
-    build: .
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
-      SHOPREC_HOST: 0.0.0.0
-      SHOPREC_PORT: 8080
-      SHOPREC_EXPERIMENT_CONFIG: /app/config/experiments.json
-      MOYUAN_AGENT_MODEL_MODE: ${MOYUAN_AGENT_MODEL_MODE:-replay}
-      MOYUAN_MODELPORT_BASE_URL: ${MOYUAN_MODELPORT_BASE_URL:-http://host.docker.internal:38082}
-      MOYUAN_MODELPORT_API_KEY: ${MOYUAN_MODELPORT_API_KEY:-}
-      MOYUAN_MODELPORT_MODEL: ${MOYUAN_MODELPORT_MODEL:-moyuan-shoprec-agent}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      BUYSENSE_PORT: 19090
+      BUYSENSE_DB_URL: jdbc:h2:file:/app/data/buysense;MODE=PostgreSQL;AUTO_SERVER=TRUE;DATABASE_TO_LOWER=TRUE
+      BUYSENSE_SESSION_SECRET: ${BUYSENSE_SESSION_SECRET:-local-development-secret-change-me}
+      BUYSENSE_MODELPORT_ENABLED: ${BUYSENSE_MODELPORT_ENABLED:-false}
+      BUYSENSE_MODELPORT_URL: ${BUYSENSE_MODELPORT_URL:-https://api.deepseek.com}
+      BUYSENSE_MODELPORT_KEY: ${BUYSENSE_MODELPORT_KEY:-}
+      BUYSENSE_MODELPORT_MODEL: ${BUYSENSE_MODELPORT_MODEL:-deepseek-chat}
+      BUYSENSE_SHOPIFY_ENABLED: ${BUYSENSE_SHOPIFY_ENABLED:-false}
+      BUYSENSE_SHOPIFY_STORE_DOMAIN: ${BUYSENSE_SHOPIFY_STORE_DOMAIN:-}
+      BUYSENSE_SHOPIFY_ADMIN_ACCESS_TOKEN: ${BUYSENSE_SHOPIFY_ADMIN_ACCESS_TOKEN:-}
     ports:
-      - "18080:8080"
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=1)"
-      interval: 10s
-      timeout: 2s
-      retries: 3
+      - "19090:19090"
+    volumes:
+      - buysense-data:/app/data
+
+volumes:
+  buysense-data:

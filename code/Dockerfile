@@ -1,16 +1,14 @@
-FROM python:3.12-slim
+FROM maven:3.9.11-eclipse-temurin-17 AS build
+WORKDIR /workspace
+COPY java-control-plane/pom.xml ./pom.xml
+RUN mvn -q -DskipTests dependency:go-offline
+COPY java-control-plane/src ./src
+RUN mvn -q -DskipTests package
+
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-# The Legacy service only needs its Python sources and runtime experiment
-# configuration. Keep course material, tests, local databases, and credentials
-# out of the final image even if the build context grows over time.
-COPY src ./src
-COPY config ./config
-RUN useradd --create-home --uid 10001 appuser
-USER appuser
-ENV PYTHONPATH=/app/src
-ENV SHOPREC_HOST=0.0.0.0
-ENV SHOPREC_PORT=8080
-EXPOSE 8080
-HEALTHCHECK --interval=10s --timeout=2s --start-period=5s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=1)"]
-CMD ["python", "-m", "shoprec.server"]
+RUN useradd --create-home --uid 10001 buysense
+COPY --from=build /workspace/target/buysense-java-0.1.0-SNAPSHOT.jar ./app.jar
+USER buysense
+EXPOSE 19090
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

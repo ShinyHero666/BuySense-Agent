@@ -51,7 +51,7 @@
     {"name": "StudioPods", "terms": ["studiopods"]},
     {"name": "VoltEdge", "terms": ["voltedge"]},
     {"name": "TravelCube", "terms": ["travelcube"]},
-    {"name": "Moyuan", "terms": ["墨圆", "moyuan"]}
+    {"name": "BuySense", "terms": ["BuySense", "buysense"]}
   ],
   "protocol_terms": ["usb-c", "gan", "蓝牙", "usb-pd", "pps"]
 }

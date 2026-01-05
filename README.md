@@ -63,8 +63,8 @@ Provide an OpenAI-compatible endpoint through environment variables; never commi
 
 ```powershell
 $env:BUYSENSE_REAL_MODEL_EVAL='true'
-$env:MOYUAN_MODELPORT_URL='https://api.deepseek.com'
-$env:MOYUAN_MODELPORT_KEY=$env:DEEPSEEK_API_KEY
-$env:MOYUAN_MODELPORT_MODEL='deepseek-chat'
+$env:BUYSENSE_MODELPORT_URL='https://api.deepseek.com'
+$env:BUYSENSE_MODELPORT_KEY=$env:DEEPSEEK_API_KEY
+$env:BUYSENSE_MODELPORT_MODEL='deepseek-chat'
 mvn '-Dtest=BuySenseRealModelEvaluationTest' test
 ```
