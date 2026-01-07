@@ -12,14 +12,37 @@ import { SearchAdsRecsBuyerAgent } from "./buyer-agent.js";
 import type { BuyerTurnRequest } from "./contracts.js";
 import { DEMO_PAGE } from "./demo-page.js";
 import { PythonDiscoveryAdapter } from "./python-adapter.js";
+import {
+  DEFAULT_DOMAIN_PACK_ID,
+  DOMAIN_PACK_REGISTRY,
+  type CommerceDomainPack,
+  type DomainPackRegistry,
+} from "./domain-pack.js";
 import { runtimeFromEnvironment } from "./runtime-from-env.js";
+import {
+  assertContract,
+  validateContract,
+  type CreateRunRequest,
+  type CreateRunResponse,
+  type DomainPackRegistryResponse,
+} from "./generated/contracts-v2.js";
 import { IdentityManager, assertSameOrigin } from "./v2-identity.js";
 import {
+  ConcurrentRunLimitError,
+  ConfirmationTargetError,
   CommerceRepository,
+  GlobalRunCapacityError,
+  IdempotencyConflictError,
   SqliteCartDraftStore,
   SqlitePendingDecisionStore,
 } from "./v2-repository.js";
 import { PersistentRunManager } from "./v2-runs.js";
+import { SearchAdsRecsMetrics } from "./metrics.js";
+import {
+  createDefaultExtensionRegistries,
+  type RegisteredWorkflow,
+  type WorkflowRegistry,
+} from "./extension-registry.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -57,9 +80,175 @@ class SlidingWindowRateLimiter {
 interface DataPlaneRuntimeStatus {
   mode: "memory" | "python";
   baseUrl: string | null;
-  status: "up" | "down" | "embedded";
+  status: "up" | "degraded" | "down" | "embedded";
   latencyMs: number;
   error: string | null;
+  retailSources: RetailSourcesRuntimeStatus | null;
+}
+
+type RetailSourceName = "catalog" | "reviews" | "pricing";
+
+interface RetailSourceTelemetry {
+  requests: number;
+  errors: number;
+  fallbacks: number;
+}
+
+interface RetailSourceRuntimeStatus {
+  configuredMode: "static" | "http" | "mixed";
+  effectiveSource: "local_snapshot" | "remote_provider" | "unavailable" | "mixed";
+  status: "up" | "degraded" | "down";
+  fallbackActive: boolean;
+  version: string | null;
+  providerId: string | null;
+  effectiveProviderId: string | null;
+  lastErrorCode?: string;
+  telemetry: RetailSourceTelemetry;
+}
+
+type RetailSourcesRuntimeStatus = Record<RetailSourceName, RetailSourceRuntimeStatus>;
+
+const SAFE_RETAIL_SOURCE_ID = /^[a-z][a-z0-9._-]{0,63}$/;
+const SAFE_RETAIL_SOURCE_VERSION = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+
+function healthRecord(value: unknown, field: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`invalid_retail_source_health:${field}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function exactHealthFields(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  required: readonly string[],
+  field: string,
+): void {
+  if (
+    Object.keys(value).some((key) => !allowed.includes(key)) ||
+    required.some((key) => !Object.hasOwn(value, key))
+  ) {
+    throw new Error(`invalid_retail_source_health:${field}`);
+  }
+}
+
+function healthEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  field: string,
+): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new Error(`invalid_retail_source_health:${field}`);
+  }
+  return value as T;
+}
+
+function safeHealthIdentifier(
+  value: unknown,
+  field: string,
+  pattern = SAFE_RETAIL_SOURCE_ID,
+): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw new Error(`invalid_retail_source_health:${field}`);
+  }
+  return value;
+}
+
+function nonNegativeHealthInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`invalid_retail_source_health:${field}`);
+  }
+  return value;
+}
+
+function healthBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`invalid_retail_source_health:${field}`);
+  }
+  return value;
+}
+
+/** Whitelist the Python-owned source health so upstream URLs, tokens and messages cannot leak. */
+function retailSourcesHealth(value: unknown): RetailSourcesRuntimeStatus {
+  const root = healthRecord(value, "retailSources");
+  const names: RetailSourceName[] = ["catalog", "reviews", "pricing"];
+  exactHealthFields(root, names, names, "retailSources");
+  return Object.fromEntries(names.map((name) => {
+    const field = `retailSources.${name}`;
+    const source = healthRecord(root[name], field);
+    const required = [
+      "configuredMode",
+      "effectiveSource",
+      "status",
+      "fallbackActive",
+      "version",
+      "providerId",
+      "effectiveProviderId",
+      "telemetry",
+    ];
+    exactHealthFields(source, [...required, "lastErrorCode"], required, field);
+    const telemetry = healthRecord(source.telemetry, `${field}.telemetry`);
+    exactHealthFields(
+      telemetry,
+      ["requests", "errors", "fallbacks"],
+      ["requests", "errors", "fallbacks"],
+      `${field}.telemetry`,
+    );
+    const lastErrorCode = source.lastErrorCode === undefined
+      ? undefined
+      : safeHealthIdentifier(source.lastErrorCode, `${field}.lastErrorCode`);
+    if (lastErrorCode === null) throw new Error(`invalid_retail_source_health:${field}.lastErrorCode`);
+    const parsed: RetailSourceRuntimeStatus = {
+      configuredMode: healthEnum(
+        source.configuredMode,
+        ["static", "http", "mixed"],
+        `${field}.configuredMode`,
+      ),
+      effectiveSource: healthEnum(
+        source.effectiveSource,
+        ["local_snapshot", "remote_provider", "unavailable", "mixed"],
+        `${field}.effectiveSource`,
+      ),
+      status: healthEnum(source.status, ["up", "degraded", "down"], `${field}.status`),
+      fallbackActive: healthBoolean(source.fallbackActive, `${field}.fallbackActive`),
+      version: safeHealthIdentifier(
+        source.version,
+        `${field}.version`,
+        SAFE_RETAIL_SOURCE_VERSION,
+      ),
+      providerId: safeHealthIdentifier(source.providerId, `${field}.providerId`),
+      effectiveProviderId: safeHealthIdentifier(
+        source.effectiveProviderId,
+        `${field}.effectiveProviderId`,
+      ),
+      ...(lastErrorCode === undefined ? {} : { lastErrorCode }),
+      telemetry: {
+        requests: nonNegativeHealthInteger(telemetry.requests, `${field}.telemetry.requests`),
+        errors: nonNegativeHealthInteger(telemetry.errors, `${field}.telemetry.errors`),
+        fallbacks: nonNegativeHealthInteger(telemetry.fallbacks, `${field}.telemetry.fallbacks`),
+      },
+    };
+    return [name, parsed];
+  })) as RetailSourcesRuntimeStatus;
+}
+
+function embeddedRetailSources(): RetailSourcesRuntimeStatus {
+  const source = (): RetailSourceRuntimeStatus => ({
+    configuredMode: "static",
+    effectiveSource: "local_snapshot",
+    status: "up",
+    fallbackActive: false,
+    version: null,
+    providerId: "embedded",
+    effectiveProviderId: "embedded",
+    telemetry: { requests: 0, errors: 0, fallbacks: 0 },
+  });
+  return {
+    catalog: source(),
+    reviews: source(),
+    pricing: source(),
+  };
 }
 
 class RequestValidationError extends Error {
@@ -151,7 +340,7 @@ function requiredString(
   if (typeof value !== "string" || !value.trim()) {
     throw new RequestValidationError(field, "must be a non-empty string");
   }
-  if (value.length > maxLength) {
+  if (Array.from(value).length > maxLength) {
     throw new RequestValidationError(field, `must be at most ${maxLength} characters`);
   }
   return value.trim();
@@ -174,18 +363,40 @@ function buyerRequest(payload: Record<string, unknown>): BuyerTurnRequest {
   };
 }
 
-function v2RunRequest(payload: Record<string, unknown>): { message: string; confirmed: boolean } {
-  const allowed = new Set(["message", "confirmed"]);
-  const unknown = Object.keys(payload).filter((field) => !allowed.has(field));
-  if (unknown.length > 0) {
-    throw new RequestValidationError("request", `unknown fields: ${unknown.sort().join(", ")}`);
+function v2RunRequest(
+  payload: Record<string, unknown>,
+  registry: DomainPackRegistry,
+): Omit<CreateRunRequest, "proposalRunId"> & {
+  confirmed: boolean;
+  domainPackId: string;
+  proposalRunId: string | null;
+} {
+  const [issue] = validateContract("CreateRunRequest", payload);
+  if (issue !== undefined) {
+    const field = /^\$\.([A-Za-z_$][A-Za-z0-9_$]*)/.exec(issue.path)?.[1] ?? "request";
+    throw new RequestValidationError(field, issue.message);
   }
-  if (payload.confirmed !== undefined && typeof payload.confirmed !== "boolean") {
-    throw new RequestValidationError("confirmed", "must be a boolean");
+  const domainPackId = typeof payload.domainPackId === "string"
+    ? payload.domainPackId
+    : DEFAULT_DOMAIN_PACK_ID;
+  if (!registry.has(domainPackId)) {
+    throw new RequestValidationError("domainPackId", `unknown domain pack: ${domainPackId}`);
+  }
+  const confirmed = payload.confirmed === true;
+  const proposalRunId = typeof payload.proposalRunId === "string"
+    ? payload.proposalRunId
+    : null;
+  if (confirmed && !proposalRunId) {
+    throw new RequestValidationError("proposalRunId", "is required for confirmation");
+  }
+  if (!confirmed && proposalRunId) {
+    throw new RequestValidationError("proposalRunId", "is only valid for confirmation");
   }
   return {
     message: requiredString(payload, "message", 2_000),
-    confirmed: payload.confirmed === true,
+    confirmed,
+    domainPackId,
+    proposalRunId,
   };
 }
 
@@ -214,17 +425,61 @@ export function buildControlPlaneServer(options: {
   secureCookie?: boolean;
   legacyV1Enabled?: boolean;
   frontendDist?: string;
+  domainRegistry?: DomainPackRegistry;
+  workflowRegistry?: WorkflowRegistry;
+  agentFactory?: (
+    domain: CommerceDomainPack,
+    workflow: RegisteredWorkflow,
+  ) => SearchAdsRecsBuyerAgent;
 } = {}): Server {
+  const domainRegistry = options.domainRegistry ?? DOMAIN_PACK_REGISTRY;
+  const workflowRegistry = options.workflowRegistry ?? createDefaultExtensionRegistries().workflows;
+  for (const domain of domainRegistry.list()) {
+    const workflow = workflowRegistry.require(domain.workflowId);
+    if (workflow.capabilityProfileId !== domain.capabilityProfileId) {
+      throw new Error(`domain capability profile mismatch: ${domain.packId}`);
+    }
+  }
+  const domainPackRegistryResponse: DomainPackRegistryResponse = {
+    defaultPackId: DEFAULT_DOMAIN_PACK_ID,
+    packs: domainRegistry.list().map((pack) => ({
+      id: pack.packId,
+      displayName: pack.displayName,
+      description: pack.description,
+      schemaVersion: pack.schemaVersion,
+      workflowId: pack.workflowId,
+      capabilityProfileId: pack.capabilityProfileId,
+      categories: pack.categories.map(({ id, label }) => ({ id, label })),
+      exampleQueries: pack.exampleQueries,
+    })),
+  };
+  assertContract("DomainPackRegistryResponse", domainPackRegistryResponse);
   const ownsRepository = options.repository === undefined;
   const repository = options.repository ?? new CommerceRepository();
-  const agent = options.agent ?? new SearchAdsRecsBuyerAgent({
-    pending: new SqlitePendingDecisionStore(repository),
-    drafts: new SqliteCartDraftStore(repository),
-  });
+  const agents = new Map<string, SearchAdsRecsBuyerAgent>();
+  const agentFor = (packId: string): SearchAdsRecsBuyerAgent => {
+    const existing = agents.get(packId);
+    if (existing) return existing;
+    const domain = domainRegistry.get(packId);
+    const workflow = workflowRegistry.require(domain.workflowId);
+    const created = packId === DEFAULT_DOMAIN_PACK_ID && options.agent
+      ? options.agent
+      : options.agentFactory?.(domain, workflow) ?? new SearchAdsRecsBuyerAgent({
+          domain,
+          workflow,
+          pending: new SqlitePendingDecisionStore(repository),
+          drafts: new SqliteCartDraftStore(repository),
+          commitConfirmation: ({ pending, result }) =>
+            repository.commitConfirmation(pending, result),
+        });
+    agents.set(packId, created);
+    return created;
+  };
+  const agent = agentFor(DEFAULT_DOMAIN_PACK_ID);
   const identities = new IdentityManager(repository, {
     secureCookie: options.secureCookie ?? false,
   });
-  const runs = new PersistentRunManager(repository, agent);
+  const runs = new PersistentRunManager(repository, agentFor);
   const rateLimiter = new SlidingWindowRateLimiter();
   repository.performMaintenance();
   const maintenance = setInterval(() => repository.performMaintenance(), 60 * 60 * 1_000);
@@ -234,6 +489,7 @@ export function buildControlPlaneServer(options: {
   const discoveryBaseUrl = options.discoveryBaseUrl ?? "http://127.0.0.1:18083";
   const frontendDist = options.frontendDist ?? FRONTEND_DIST;
   const legacyV1Enabled = options.legacyV1Enabled ?? true;
+  const activeEventStreams = new Map<ServerResponse, () => void>();
 
   const dataPlaneProbe = async (): Promise<DataPlaneRuntimeStatus> => {
     if (discoveryMode === "memory") {
@@ -243,20 +499,29 @@ export function buildControlPlaneServer(options: {
         status: "embedded",
         latencyMs: 0,
         error: null,
+        retailSources: embeddedRetailSources(),
       };
     }
     const startedAt = performance.now();
     try {
-      const response = await fetch(`${discoveryBaseUrl}/health`, {
+      const response = await fetch(`${discoveryBaseUrl}/health/ready`, {
         signal: AbortSignal.timeout(2_000),
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const health = healthRecord(await response.json(), "root");
+      const retailSources = retailSourcesHealth(health.retailSources);
+      const sourceStatuses = Object.values(retailSources);
+      const status = !response.ok || sourceStatuses.some((source) => source.status === "down")
+        ? "down" as const
+        : sourceStatuses.some((source) => source.status === "degraded" || source.fallbackActive)
+          ? "degraded" as const
+          : "up" as const;
       return {
         mode: "python",
         baseUrl: discoveryBaseUrl,
-        status: "up",
+        status,
         latencyMs: Math.round((performance.now() - startedAt) * 10) / 10,
-        error: null,
+        error: status === "down" ? "retail_source_unavailable" : null,
+        retailSources,
       };
     } catch (error) {
       return {
@@ -264,21 +529,95 @@ export function buildControlPlaneServer(options: {
         baseUrl: discoveryBaseUrl,
         status: "down",
         latencyMs: Math.round((performance.now() - startedAt) * 10) / 10,
-        error: error instanceof Error ? error.message : "data plane probe failed",
+        error: error instanceof Error && error.message.startsWith("invalid_retail_source_health:")
+          ? "invalid_retail_source_health"
+          : error instanceof Error
+            ? error.message
+            : "data_plane_probe_failed",
+        retailSources: null,
       };
     }
   };
 
-  const runtimePayload = async () => {
-    const [model, dataPlane] = await Promise.all([
-      agent.runtime.probe(),
-      dataPlaneProbe(),
-    ]);
+  const modelProbe = async () => {
+    const startedAt = performance.now();
+    try {
+      return await agent.runtime.probe();
+    } catch (error) {
+      return {
+        ...agent.runtime.describe(),
+        status: "down" as const,
+        latencyMs: Math.round((performance.now() - startedAt) * 10) / 10,
+        error: error instanceof Error ? error.message : "runtime probe failed",
+      };
+    }
+  };
+
+  const dataPlaneDependency = (dataPlane: DataPlaneRuntimeStatus) => {
+    const fallbackActive = dataPlane.retailSources !== null &&
+      Object.values(dataPlane.retailSources).some((source) => source.fallbackActive);
     return {
+      required: discoveryMode === "python",
+      status: dataPlane.status,
+      fallback: discoveryMode === "memory" ? "embedded" : "python_managed_static_snapshot",
+      fallbackActive,
+    };
+  };
+
+  // Kubernetes readiness only waits for dependencies that are required to
+  // serve a request. ModelPort is deliberately excluded because every role has
+  // a deterministic fallback and an optional-model timeout must not remove the
+  // pod from service.
+  const readinessPayload = async () => {
+    const [dataPlane, storage] = await Promise.all([
+      dataPlaneProbe(),
+      Promise.resolve(repository.healthStatus()),
+    ]);
+    const ready = dataPlane.status !== "down" && storage.status === "up";
+    const dataPlaneDegraded = dataPlane.status === "degraded";
+    return {
+      status: !ready ? "DOWN" : dataPlaneDegraded ? "DEGRADED" : "UP",
+      ready,
+      service: "moyuan-search-ads-recs-agent",
+      version: "2.0.0",
+      dataPlane,
+      dependencies: {
+        dataPlane: dataPlaneDependency(dataPlane),
+        storage: { required: true, ...storage },
+      },
+    };
+  };
+
+  const runtimePayload = async () => {
+    const [model, dataPlane, storage] = await Promise.all([
+      modelProbe(),
+      dataPlaneProbe(),
+      Promise.resolve(repository.healthStatus()),
+    ]);
+    const ready = dataPlane.status !== "down" && storage.status === "up";
+    const modelFallbackActive = model.status === "down";
+    const dataPlaneDegraded = dataPlane.status === "degraded";
+    return {
+      status: !ready || dataPlane.status === "down"
+        ? "DOWN"
+        : modelFallbackActive || dataPlaneDegraded
+          ? "DEGRADED"
+          : "UP",
+      ready,
       service: "moyuan-search-ads-recs-agent",
       version: "2.0.0",
       model,
       dataPlane,
+      dependencies: {
+        model: {
+          required: false,
+          status: model.status,
+          fallback: "deterministic_role_policy",
+          fallbackActive: modelFallbackActive,
+        },
+        dataPlane: dataPlaneDependency(dataPlane),
+        storage: { required: true, ...storage },
+      },
       agentFramework: "@earendil-works/pi-agent-core",
       paymentEnabled: false,
     };
@@ -304,16 +643,19 @@ export function buildControlPlaneServer(options: {
         else send(response, 404, { error: "not_found" });
         return;
       }
-      if (
-        request.method === "GET" &&
-        (url.pathname === "/health" || url.pathname === "/health/ready")
-      ) {
+      if (request.method === "GET" && url.pathname === "/health") {
         const runtime = await runtimePayload();
-        const healthy = runtime.model.status !== "down" && runtime.dataPlane.status !== "down";
-        send(response, healthy ? 200 : 503, {
-          status: healthy ? "UP" : "DEGRADED",
-          ...runtime,
-        });
+        send(response, 200, runtime);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/health/ready") {
+        const runtime = await readinessPayload();
+        send(response, runtime.ready ? 200 : 503, runtime);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/health/dependencies") {
+        const runtime = await runtimePayload();
+        send(response, runtime.ready ? 200 : 503, runtime);
         return;
       }
       if (legacyV1Enabled && request.method === "GET" && url.pathname === "/api/v1/runtime") {
@@ -321,7 +663,9 @@ export function buildControlPlaneServer(options: {
         return;
       }
       if (request.method === "GET" && url.pathname === "/metrics") {
-        send(response, 200, agent.metrics.snapshot());
+        send(response, 200, SearchAdsRecsMetrics.aggregate(
+          [...agents.values()].map((current) => current.metrics),
+        ));
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/v2/quality") {
@@ -330,6 +674,10 @@ export function buildControlPlaneServer(options: {
         } catch {
           send(response, 503, { error: "quality_report_unavailable" });
         }
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/v2/domain-packs") {
+        send(response, 200, domainPackRegistryResponse);
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/v2/session") {
@@ -403,42 +751,59 @@ export function buildControlPlaneServer(options: {
       if (request.method === "POST" && url.pathname === "/api/v2/runs") {
         assertSameOrigin(request);
         const identity = identities.ensure(request, response);
-        if (!rateLimiter.allow(identity.identityId)) {
-          response.setHeader("retry-after", "60");
-          send(response, 429, { error: "rate_limit_exceeded" });
-          return;
-        }
-        const input = v2RunRequest(await jsonBody(request));
+        const input = v2RunRequest(await jsonBody(request), domainRegistry);
+        const domain = domainRegistry.get(input.domainPackId);
         const rawKey = request.headers["idempotency-key"];
         const idempotencyKey = Array.isArray(rawKey) ? rawKey[0] : rawKey;
         if (idempotencyKey !== undefined && (idempotencyKey.length < 1 || idempotencyKey.length > 128)) {
           throw new RequestValidationError("Idempotency-Key", "must contain 1 to 128 characters");
         }
-        const replay = idempotencyKey
+        const idempotencyReplay = idempotencyKey
           ? runs.findByIdempotency(identity.identityId, idempotencyKey)
           : null;
-        if (!replay && !runs.canAccept()) {
-          response.setHeader("retry-after", "5");
-          send(response, 503, { error: "global_run_capacity_exhausted" });
+        const proposalReplay = input.proposalRunId
+          ? runs.findConfirmation(identity.identityId, input.proposalRunId)
+          : null;
+        const replay = idempotencyReplay ?? proposalReplay;
+        const retryNeedsExecution = Boolean(
+          !idempotencyReplay &&
+          input.proposalRunId &&
+          repository.confirmationRetryNeedsExecution(
+            identity.identityId,
+            input.proposalRunId,
+          ),
+        );
+        // A byte-for-byte same-key replay is free. A new key for an existing
+        // proposal may start a fresh confirmation attempt, so it still consumes
+        // the identity's request-rate budget even though it reuses the Run row.
+        if (!idempotencyReplay && !rateLimiter.allow(identity.identityId)) {
+          response.setHeader("retry-after", "60");
+          send(response, 429, { error: "rate_limit_exceeded" });
           return;
         }
-        if (!replay && repository.countActiveRuns(identity.identityId) >= 3) {
-          response.setHeader("retry-after", "2");
-          send(response, 429, { error: "concurrent_run_limit_exceeded" });
+        if ((!replay || retryNeedsExecution) && !runs.canAccept()) {
+          response.setHeader("retry-after", "5");
+          send(response, 503, { error: "global_run_capacity_exhausted" });
           return;
         }
         const creation = runs.create({
           identity,
           ...input,
+          workflowId: domain.workflowId,
           idempotencyKey: idempotencyKey ?? null,
+          activeRunLimit: 3,
         });
-        send(response, creation.created ? 202 : 200, {
+        const createRunResponse: CreateRunResponse = {
           runId: creation.run.runId,
+          domainPackId: creation.run.domainPackId,
+          workflowId: creation.run.workflowId,
           status: creation.run.status,
           eventsUrl: `/api/v2/runs/${encodeURIComponent(creation.run.runId)}/events`,
           runUrl: `/api/v2/runs/${encodeURIComponent(creation.run.runId)}`,
           idempotentReplay: !creation.created,
-        });
+        };
+        assertContract("CreateRunResponse", createRunResponse);
+        send(response, creation.created ? 202 : 200, createRunResponse);
         return;
       }
       const v2RunId = pathRunId(url.pathname);
@@ -470,8 +835,11 @@ export function buildControlPlaneServer(options: {
           connection: "keep-alive",
           "x-accel-buffering": "no",
         });
+        let deliveredSequence = cursor;
         const writeEvent = (event: ReturnType<typeof runs.events>[number]) => {
           if (response.destroyed || response.writableEnded) return;
+          if (event.sequence <= deliveredSequence) return;
+          deliveredSequence = event.sequence;
           response.write(`id: ${event.sequence}\nevent: ${event.eventType}\ndata: ${JSON.stringify(event)}\n\n`);
           if (["result", "run_failed", "run_cancelled"].includes(event.eventType)) {
             cleanup();
@@ -483,12 +851,22 @@ export function buildControlPlaneServer(options: {
         const cleanup = () => {
           unsubscribe();
           if (heartbeat) clearInterval(heartbeat);
+          activeEventStreams.delete(response);
         };
+        activeEventStreams.set(response, cleanup);
         unsubscribe = runs.subscribe(eventRunId, writeEvent);
         request.on("close", cleanup);
         for (const event of runs.events(eventRunId, identity.identityId, cursor)) writeEvent(event);
         const current = runs.get(eventRunId, identity.identityId);
         if (current && ["completed", "failed", "cancelled"].includes(current.status)) {
+          // The terminal state and terminal event commit atomically. Re-read the
+          // ledger after observing terminal state to close the replay/subscribe
+          // interleaving window across multiple control-plane processes.
+          for (const event of runs.events(
+            eventRunId,
+            identity.identityId,
+            deliveredSequence,
+          )) writeEvent(event);
           cleanup();
           if (!response.writableEnded) response.end();
           return;
@@ -573,6 +951,24 @@ export function buildControlPlaneServer(options: {
         });
         return;
       }
+      if (error instanceof IdempotencyConflictError) {
+        send(response, 409, { error: "idempotency_key_reused" });
+        return;
+      }
+      if (error instanceof ConfirmationTargetError) {
+        send(response, 409, { error: error.code });
+        return;
+      }
+      if (error instanceof ConcurrentRunLimitError) {
+        response.setHeader("retry-after", "2");
+        send(response, 429, { error: error.message });
+        return;
+      }
+      if (error instanceof GlobalRunCapacityError) {
+        response.setHeader("retry-after", "5");
+        send(response, 503, { error: error.message });
+        return;
+      }
       if (error instanceof Error && error.message === "cross_site_request_rejected") {
         send(response, 403, { error: "cross_site_request_rejected" });
         return;
@@ -583,7 +979,24 @@ export function buildControlPlaneServer(options: {
       send(response, 500, { error: "internal_server_error" });
     }
   });
-  server.once("close", () => clearInterval(maintenance));
+  let shutdownStarted = false;
+  const beginShutdown = () => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    runs.close();
+    clearInterval(maintenance);
+    for (const [response, cleanup] of activeEventStreams) {
+      cleanup();
+      if (!response.writableEnded) response.end();
+    }
+    activeEventStreams.clear();
+  };
+  const nativeClose = server.close.bind(server);
+  server.close = ((callback?: (error?: Error) => void) => {
+    beginShutdown();
+    return nativeClose(callback);
+  }) as Server["close"];
+  server.once("close", beginShutdown);
   if (ownsRepository) server.once("close", () => repository.close());
   return server;
 }
@@ -601,26 +1014,30 @@ export async function main(): Promise<void> {
   if (!["memory", "python"].includes(discoveryMode)) {
     throw new Error("MOYUAN_DISCOVERY_MODE must be memory or python");
   }
-  const dataPlane = discoveryMode === "python"
-    ? new PythonDiscoveryAdapter(
-        process.env.MOYUAN_DISCOVERY_BASE_URL ?? "http://127.0.0.1:18083",
-      )
-    : undefined;
+  const discoveryBaseUrl = process.env.MOYUAN_DISCOVERY_BASE_URL ?? "http://127.0.0.1:18083";
   const runtime = runtimeFromEnvironment();
   const repository = new CommerceRepository(
     process.env.MOYUAN_DATABASE_PATH ?? ".runtime/commerce-agent.sqlite",
   );
-  const agent = new SearchAdsRecsBuyerAgent({
-    runtime,
-    ...(dataPlane ? { channels: dataPlane, evidence: dataPlane } : {}),
-    pending: new SqlitePendingDecisionStore(repository),
-    drafts: new SqliteCartDraftStore(repository),
-  });
   const server = buildControlPlaneServer({
-    agent,
     repository,
+    agentFactory: (domain, workflow) => {
+      const dataPlane = discoveryMode === "python"
+        ? new PythonDiscoveryAdapter(discoveryBaseUrl, domain)
+        : undefined;
+      return new SearchAdsRecsBuyerAgent({
+        runtime,
+        domain,
+        workflow,
+        ...(dataPlane ? { channels: dataPlane, evidence: dataPlane } : {}),
+        pending: new SqlitePendingDecisionStore(repository),
+        drafts: new SqliteCartDraftStore(repository),
+        commitConfirmation: ({ pending, result }) =>
+          repository.commitConfirmation(pending, result),
+      });
+    },
     discoveryMode: discoveryMode as "memory" | "python",
-    discoveryBaseUrl: process.env.MOYUAN_DISCOVERY_BASE_URL ?? "http://127.0.0.1:18083",
+    discoveryBaseUrl,
     secureCookie: process.env.MOYUAN_SECURE_COOKIE === "true",
     legacyV1Enabled: process.env.MOYUAN_ENABLE_V1_API === "true",
   });
@@ -635,6 +1052,29 @@ export async function main(): Promise<void> {
       `Search-ads-recs Agent is listening on http://${host}:${actualPort} ` +
       `[model=${descriptor.mode}:${descriptor.model}, discovery=${discoveryMode}]`,
     );
+  });
+  let shuttingDown = false;
+  const shutdown = (signal: "SIGINT" | "SIGTERM") => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}; draining control-plane connections`);
+    const forceClose = setTimeout(() => server.closeAllConnections(), 10_000);
+    forceClose.unref();
+    server.close((error) => {
+      clearTimeout(forceClose);
+      if (error) {
+        console.error("Control-plane shutdown failed", { errorType: error.name });
+        process.exitCode = 1;
+      }
+    });
+  };
+  const onSigint = () => shutdown("SIGINT");
+  const onSigterm = () => shutdown("SIGTERM");
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+  server.once("close", () => {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
   });
 }
 

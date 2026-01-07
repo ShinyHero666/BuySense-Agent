@@ -51,6 +51,10 @@ class RetailDiscoveryServiceTest(unittest.TestCase):
         self.assertTrue(all(item["stock"] > 0 for item in result["items"]))
         self.assertTrue(all(item["price"] <= 7000 for item in result["items"]))
         self.assertTrue(all(item["quote_version"] for item in result["items"]))
+        self.assertEqual(result["data_source"]["source"], "local_snapshot")
+        self.assertEqual(
+            result["data_source"]["source_version"], result["catalog_version"]
+        )
 
     def test_recommendation_consumes_search_peer_context(self) -> None:
         request = {**self.request, "primary_product_ids": ["spu-honor-200"]}

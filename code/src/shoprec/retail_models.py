@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .retail_domain import PRODUCT_CATEGORIES
+from .retail_domain import NORMAL_3C_DOMAIN_PACK_MODEL, RetailDomainPack
 
 ECOSYSTEMS = frozenset({"ios", "android", "universal"})
+SAFE_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass(frozen=True)
@@ -69,14 +71,17 @@ class RetailCatalogSnapshot:
         )
 
 
-def default_catalog_path() -> Path:
-    return Path(__file__).resolve().parent / "data" / "normal_3c_catalog_v1.json"
+def default_catalog_path(pack: RetailDomainPack | None = None) -> Path:
+    return (pack or NORMAL_3C_DOMAIN_PACK_MODEL).asset_path("catalog")
 
 
 def _non_empty_string(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} must be a non-empty string")
-    return value.strip()
+    result = value.strip()
+    if len(result) > 500:
+        raise ValueError(f"{field} must contain at most 500 characters")
+    return result
 
 
 def _string_tuple(value: Any, field: str) -> tuple[str, ...]:
@@ -84,15 +89,69 @@ def _string_tuple(value: Any, field: str) -> tuple[str, ...]:
         isinstance(item, str) and item.strip() for item in value
     ):
         raise ValueError(f"{field} must be an array of non-empty strings")
+    if len(value) > 100:
+        raise ValueError(f"{field} must contain at most 100 values")
     return tuple(item.strip() for item in value)
 
 
+def _mapping(value: Any, field: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} must be an object")
+    return value
+
+
+def _reject_unknown_fields(
+    value: dict[str, Any], allowed: set[str], field: str
+) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"{field} contains unknown fields: {', '.join(unknown)}")
+
+
+def _timestamp(value: Any, field: str) -> str:
+    result = _non_empty_string(value, field)
+    try:
+        parsed = datetime.fromisoformat(result.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{field} must be an ISO-8601 timestamp") from error
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} must include a timezone")
+    return result
+
+
+def _version(value: Any, field: str) -> str:
+    result = _non_empty_string(value, field)
+    if SAFE_VERSION.fullmatch(result) is None:
+        raise ValueError(f"{field} must be a safe version identifier")
+    return result
+
+
 def _offer(raw: dict[str, Any], field: str) -> RetailOffer:
+    _reject_unknown_fields(
+        raw,
+        {
+            "offer_id",
+            "seller_id",
+            "price",
+            "currency",
+            "stock",
+            "sponsored",
+            "valid_until",
+            "ad_bid",
+            "ad_quality",
+        },
+        field,
+    )
     price = raw.get("price")
     stock = raw.get("stock")
     sponsored = raw.get("sponsored")
-    if isinstance(price, bool) or not isinstance(price, (int, float)) or price < 0:
-        raise ValueError(f"{field}.price must be a non-negative number")
+    if (
+        isinstance(price, bool)
+        or not isinstance(price, (int, float))
+        or not math.isfinite(price)
+        or price < 0
+    ):
+        raise ValueError(f"{field}.price must be a finite non-negative number")
     if isinstance(stock, bool) or not isinstance(stock, int) or stock < 0:
         raise ValueError(f"{field}.stock must be a non-negative integer")
     if not isinstance(sponsored, bool):
@@ -100,11 +159,7 @@ def _offer(raw: dict[str, Any], field: str) -> RetailOffer:
     currency = _non_empty_string(raw.get("currency"), f"{field}.currency")
     if currency != "CNY":
         raise ValueError(f"{field}.currency must be CNY")
-    valid_until = _non_empty_string(raw.get("valid_until"), f"{field}.valid_until")
-    try:
-        datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ValueError(f"{field}.valid_until must be an ISO-8601 timestamp") from error
+    valid_until = _timestamp(raw.get("valid_until"), f"{field}.valid_until")
     ad_bid = raw.get("ad_bid", 0.0)
     ad_quality = raw.get("ad_quality", 0.0)
     if (
@@ -134,11 +189,21 @@ def _offer(raw: dict[str, Any], field: str) -> RetailOffer:
     )
 
 
-def load_retail_catalog(path: str | Path | None = None) -> RetailCatalogSnapshot:
-    source = Path(path) if path else default_catalog_path()
-    raw = json.loads(source.read_text(encoding="utf-8"))
+def parse_retail_catalog(
+    raw: Any,
+    *,
+    pack: RetailDomainPack | None = None,
+) -> RetailCatalogSnapshot:
+    runtime_pack = pack or NORMAL_3C_DOMAIN_PACK_MODEL
     if not isinstance(raw, dict) or not isinstance(raw.get("spus"), list):
         raise ValueError("retail catalog must contain a spus array")
+    _reject_unknown_fields(
+        raw,
+        {"catalog_version", "quote_version", "generated_at", "spus", "data_source"},
+        "retail catalog",
+    )
+    if len(raw["spus"]) > 2000:
+        raise ValueError("retail catalog must contain at most 2000 spus")
 
     seen_spus: set[str] = set()
     seen_skus: set[str] = set()
@@ -147,18 +212,42 @@ def load_retail_catalog(path: str | Path | None = None) -> RetailCatalogSnapshot
     for spu_index, raw_spu in enumerate(raw["spus"]):
         if not isinstance(raw_spu, dict) or not isinstance(raw_spu.get("skus"), list):
             raise ValueError(f"spus[{spu_index}] must contain a skus array")
+        _reject_unknown_fields(
+            raw_spu,
+            {"spu_id", "title", "category", "brand", "tags", "skus"},
+            f"spus[{spu_index}]",
+        )
+        if len(raw_spu["skus"]) > 100:
+            raise ValueError(f"spus[{spu_index}].skus must contain at most 100 values")
         spu_id = _non_empty_string(raw_spu.get("spu_id"), f"spus[{spu_index}].spu_id")
         if spu_id in seen_spus:
             raise ValueError(f"duplicate spu_id: {spu_id}")
         seen_spus.add(spu_id)
         category = _non_empty_string(raw_spu.get("category"), f"{spu_id}.category")
-        if category not in PRODUCT_CATEGORIES:
+        if category not in runtime_pack.product_categories:
             raise ValueError(f"unknown product category: {category}")
 
         skus: list[RetailSku] = []
         for sku_index, raw_sku in enumerate(raw_spu["skus"]):
             if not isinstance(raw_sku, dict) or not isinstance(raw_sku.get("offers"), list):
                 raise ValueError(f"{spu_id}.skus[{sku_index}] must contain an offers array")
+            _reject_unknown_fields(
+                raw_sku,
+                {
+                    "sku_id",
+                    "title",
+                    "ecosystem",
+                    "connectors",
+                    "protocols",
+                    "offers",
+                    "max_power_watts",
+                },
+                f"{spu_id}.skus[{sku_index}]",
+            )
+            if len(raw_sku["offers"]) > 100:
+                raise ValueError(
+                    f"{spu_id}.skus[{sku_index}].offers must contain at most 100 values"
+                )
             sku_id = _non_empty_string(raw_sku.get("sku_id"), f"{spu_id}.sku_id")
             if sku_id in seen_skus:
                 raise ValueError(f"duplicate sku_id: {sku_id}")
@@ -167,7 +256,10 @@ def load_retail_catalog(path: str | Path | None = None) -> RetailCatalogSnapshot
             if ecosystem not in ECOSYSTEMS:
                 raise ValueError(f"unknown ecosystem: {ecosystem}")
             offers = tuple(
-                _offer(raw_offer, f"{sku_id}.offers[{offer_index}]")
+                _offer(
+                    _mapping(raw_offer, f"{sku_id}.offers[{offer_index}]"),
+                    f"{sku_id}.offers[{offer_index}]",
+                )
                 for offer_index, raw_offer in enumerate(raw_sku["offers"])
             )
             if not offers:
@@ -208,8 +300,21 @@ def load_retail_catalog(path: str | Path | None = None) -> RetailCatalogSnapshot
         )
 
     return RetailCatalogSnapshot(
-        catalog_version=_non_empty_string(raw.get("catalog_version"), "catalog_version"),
-        quote_version=_non_empty_string(raw.get("quote_version"), "quote_version"),
-        generated_at=_non_empty_string(raw.get("generated_at"), "generated_at"),
+        catalog_version=_version(raw.get("catalog_version"), "catalog_version"),
+        quote_version=_version(raw.get("quote_version"), "quote_version"),
+        generated_at=_timestamp(raw.get("generated_at"), "generated_at"),
         spus=tuple(spus),
+    )
+
+
+def load_retail_catalog(
+    path: str | Path | None = None,
+    *,
+    pack: RetailDomainPack | None = None,
+) -> RetailCatalogSnapshot:
+    runtime_pack = pack or NORMAL_3C_DOMAIN_PACK_MODEL
+    source = Path(path) if path else default_catalog_path(runtime_pack)
+    return parse_retail_catalog(
+        json.loads(source.read_text(encoding="utf-8")),
+        pack=runtime_pack,
     )

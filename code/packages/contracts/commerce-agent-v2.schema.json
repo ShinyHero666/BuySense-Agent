@@ -53,14 +53,17 @@
     "AgentRun": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runId", "identityId", "sessionId", "status", "message", "confirmed", "createdAt", "updatedAt", "cancelRequested"],
+      "required": ["runId", "identityId", "sessionId", "domainPackId", "workflowId", "status", "message", "confirmed", "createdAt", "updatedAt", "cancelRequested"],
       "properties": {
         "runId": {"type": "string"},
         "identityId": {"type": "string"},
         "sessionId": {"type": "string"},
+        "domainPackId": {"$ref": "#/$defs/DomainPackId"},
+        "workflowId": {"$ref": "#/$defs/WorkflowId"},
         "status": {"$ref": "#/$defs/RunStatus"},
         "message": {"type": "string"},
         "confirmed": {"type": "boolean"},
+        "proposalRunId": {"type": ["string", "null"], "minLength": 1, "maxLength": 128},
         "idempotencyKey": {"type": ["string", "null"]},
         "result": {},
         "errorCode": {"type": ["string", "null"]},
@@ -86,28 +89,94 @@
       }
     },
     "CreateRunRequest": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["message"],
-      "properties": {
-        "message": {"type": "string", "minLength": 1, "maxLength": 2000},
-        "confirmed": {"type": "boolean", "default": false}
-      }
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["message", "confirmed", "proposalRunId"],
+          "properties": {
+            "message": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "confirmed": {"type": "boolean", "const": true},
+            "proposalRunId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "domainPackId": {"$ref": "#/$defs/DomainPackId", "default": "normal-3c-v1"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["message"],
+          "properties": {
+            "message": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "confirmed": {"type": "boolean", "const": false, "default": false},
+            "domainPackId": {"$ref": "#/$defs/DomainPackId", "default": "normal-3c-v1"}
+          }
+        }
+      ]
     },
     "CreateRunResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runId", "status", "eventsUrl", "runUrl"],
+      "required": ["runId", "domainPackId", "workflowId", "status", "eventsUrl", "runUrl", "idempotentReplay"],
       "properties": {
         "runId": {"type": "string"},
+        "domainPackId": {"$ref": "#/$defs/DomainPackId"},
+        "workflowId": {"$ref": "#/$defs/WorkflowId"},
         "status": {"$ref": "#/$defs/RunStatus"},
         "eventsUrl": {"type": "string"},
-        "runUrl": {"type": "string"}
+        "runUrl": {"type": "string"},
+        "idempotentReplay": {"type": "boolean"}
+      }
+    },
+    "DomainPackId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9-]*(?:-v[0-9]+)$"
+    },
+    "WorkflowId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9-]*(?:-v[0-9]+)$"
+    },
+    "DomainPackCategorySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {"$ref": "#/$defs/WireProductCategory"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 120}
+      }
+    },
+    "DomainPackSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName", "description", "schemaVersion", "workflowId", "capabilityProfileId", "categories", "exampleQueries"],
+      "properties": {
+        "id": {"$ref": "#/$defs/DomainPackId"},
+        "displayName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "description": {"type": "string", "minLength": 1, "maxLength": 500},
+        "schemaVersion": {"type": "string", "const": "1.0"},
+        "workflowId": {"$ref": "#/$defs/WorkflowId"},
+        "capabilityProfileId": {"$ref": "#/$defs/DomainPackId"},
+        "categories": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/DomainPackCategorySummary"}},
+        "exampleQueries": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string", "minLength": 1, "maxLength": 2000}}
+      }
+    },
+    "DomainPackRegistryResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultPackId", "packs"],
+      "properties": {
+        "defaultPackId": {"$ref": "#/$defs/DomainPackId"},
+        "packs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/DomainPackSummary"}}
       }
     },
     "WireProductCategory": {
       "type": "string",
-      "enum": ["phone", "headphones", "charger", "cable", "case"]
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*$"
     },
     "WireRetrievalChannel": {
       "type": "string",
@@ -116,22 +185,91 @@
     "DiscoveryWireRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["query", "requested_categories", "use_cases", "preferred_brands", "primary_product_ids", "limit", "sponsored_allowed", "personalization_enabled"],
       "properties": {
-        "query": {"type": "string"},
-        "requested_categories": {"type": "array", "items": {"$ref": "#/$defs/WireProductCategory"}},
-        "use_cases": {"type": "array", "items": {"type": "string"}},
-        "preferred_brands": {"type": "array", "items": {"type": "string"}},
-        "primary_product_ids": {"type": "array", "items": {"type": "string"}},
-        "max_price": {"type": ["number", "null"]},
-        "limit": {"type": "integer"},
-        "sponsored_allowed": {"type": "boolean"},
-        "identity_id": {"type": "string"},
-        "session_id": {"type": "string"},
-        "personalization_enabled": {"type": "boolean"},
-        "recent_product_ids": {"type": "array", "items": {"type": "string"}},
-        "excluded_product_ids": {"type": "array", "items": {"type": "string"}},
-        "ad_exposure_product_ids": {"type": "array", "items": {"type": "string"}}
+        "query": {"type": "string", "maxLength": 4096, "default": ""},
+        "domain_pack_id": {"$ref": "#/$defs/DomainPackId", "default": "normal-3c-v1"},
+        "requested_categories": {"type": "array", "items": {"$ref": "#/$defs/WireProductCategory"}, "default": []},
+        "use_cases": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": []},
+        "preferred_brands": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": []},
+        "primary_product_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": []},
+        "max_price": {"type": ["number", "null"], "minimum": 0, "default": null},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 8},
+        "sponsored_allowed": {"type": "boolean", "default": true},
+        "identity_id": {"type": "string", "maxLength": 128, "default": ""},
+        "session_id": {"type": "string", "maxLength": 128, "default": ""},
+        "personalization_enabled": {"type": "boolean", "default": true},
+        "recent_product_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": []},
+        "excluded_product_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": []},
+        "ad_exposure_product_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "default": []}
+      }
+    },
+    "DataSourceKind": {
+      "type": "string",
+      "enum": ["local_snapshot", "remote_provider"]
+    },
+    "DataSourceMetadataWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "source_version", "provider_id"],
+      "properties": {
+        "source": {"$ref": "#/$defs/DataSourceKind"},
+        "source_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "provider_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9._-]{0,63}$"}
+      }
+    },
+    "RetailOfferWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offer_id", "seller_id", "price", "currency", "stock", "sponsored", "valid_until"],
+      "properties": {
+        "offer_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "seller_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "price": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "const": "CNY"},
+        "stock": {"type": "integer", "minimum": 0},
+        "sponsored": {"type": "boolean"},
+        "valid_until": {"type": "string", "format": "date-time"},
+        "ad_bid": {"type": "number", "minimum": 0},
+        "ad_quality": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "RetailSkuWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sku_id", "title", "ecosystem", "connectors", "protocols", "offers"],
+      "properties": {
+        "sku_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "ecosystem": {"type": "string", "enum": ["ios", "android", "universal"]},
+        "connectors": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "protocols": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "offers": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/RetailOfferWireRecord"}},
+        "max_power_watts": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "RetailSpuWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spu_id", "title", "category", "brand", "tags", "skus"],
+      "properties": {
+        "spu_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "category": {"$ref": "#/$defs/WireProductCategory"},
+        "brand": {"type": "string", "minLength": 1, "maxLength": 128},
+        "tags": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
+        "skus": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/RetailSkuWireRecord"}}
+      }
+    },
+    "RetailCatalogSnapshotWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalog_version", "quote_version", "generated_at", "data_source", "spus"],
+      "properties": {
+        "catalog_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "quote_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "data_source": {"$ref": "#/$defs/DataSourceMetadataWireRecord"},
+        "spus": {"type": "array", "maxItems": 2000, "items": {"$ref": "#/$defs/RetailSpuWireRecord"}}
       }
     },
     "CandidateWireRecord": {
@@ -149,43 +287,154 @@
         "price": {"type": "number"},
         "currency": {"type": "string", "const": "CNY"},
         "stock": {"type": "integer"},
+        "tags": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+        "ecosystem": {"type": "string", "enum": ["ios", "android", "universal"]},
+        "connectors": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+        "protocols": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+        "max_power_watts": {"type": ["integer", "null"], "minimum": 1},
+        "catalog_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "quote_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "quote_valid_until": {"type": "string", "format": "date-time"},
+        "ad_bid": {"type": "number", "minimum": 0},
+        "ad_quality": {"type": "number", "minimum": 0, "maximum": 1},
         "channel": {"$ref": "#/$defs/WireRetrievalChannel"},
         "channel_score": {"type": "number"},
         "normalized_score": {"type": "number"},
         "reasons": {"type": "array", "items": {"type": "string"}},
-        "sponsored": {"type": "boolean"}
+        "sources": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/WireRetrievalChannel"}},
+        "sponsored": {"type": "boolean"},
+        "disclosure": {"type": ["string", "null"]}
+      }
+    },
+    "DiscoveryWireResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "catalog_version", "quote_version", "data_source", "items"],
+      "properties": {
+        "channel": {"$ref": "#/$defs/WireRetrievalChannel"},
+        "catalog_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "quote_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "data_source": {"$ref": "#/$defs/DataSourceMetadataWireRecord"},
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/CandidateWireRecord"}}
+      }
+    },
+    "ReviewAspectWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aspect", "sentiment", "mention_count", "confidence", "summary"],
+      "properties": {
+        "aspect": {"type": "string", "minLength": 1, "maxLength": 120},
+        "sentiment": {"type": "number", "minimum": -1, "maximum": 1},
+        "mention_count": {"type": "integer", "minimum": 0},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    },
+    "ReviewProductWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_id", "sample_size", "aspects", "source", "source_version", "provider_id"],
+      "properties": {
+        "product_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "sample_size": {"type": "integer", "minimum": 0},
+        "aspects": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/ReviewAspectWireRecord"}},
+        "source": {"$ref": "#/$defs/DataSourceKind"},
+        "source_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "provider_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9._-]{0,63}$"}
+      }
+    },
+    "ReviewEvidenceWireRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_ids"],
+      "properties": {
+        "domain_pack_id": {"$ref": "#/$defs/DomainPackId"},
+        "product_ids": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    "ReviewEvidenceWireResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_snapshot_version", "data_source", "products", "missing_product_ids"],
+      "properties": {
+        "review_snapshot_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "data_source": {"$ref": "#/$defs/DataSourceMetadataWireRecord"},
+        "products": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/ReviewProductWireRecord"}},
+        "missing_product_ids": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    "PricingQuoteWireRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offer_ids"],
+      "properties": {
+        "domain_pack_id": {"$ref": "#/$defs/DomainPackId"},
+        "offer_ids": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+      }
+    },
+    "PriceQuoteWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offer_id", "status", "amount", "currency", "stock", "valid_until", "reason"],
+      "properties": {
+        "offer_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"type": "string", "enum": ["active", "unavailable"]},
+        "amount": {"type": ["number", "null"], "minimum": 0},
+        "currency": {"type": "string", "const": "CNY"},
+        "stock": {"type": "integer", "minimum": 0},
+        "valid_until": {"type": "string", "format": "date-time"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 240}
+      }
+    },
+    "PricingQuoteWireResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quote_batch_id", "quote_version", "issued_at", "data_source", "quotes"],
+      "properties": {
+        "quote_batch_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "quote_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "issued_at": {"type": "string", "format": "date-time"},
+        "data_source": {"$ref": "#/$defs/DataSourceMetadataWireRecord"},
+        "quotes": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/PriceQuoteWireRecord"}}
+      }
+    },
+    "FusionChannelWireRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "items"],
+      "properties": {
+        "channel": {"$ref": "#/$defs/WireRetrievalChannel"},
+        "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/CandidateWireRecord"}},
+        "catalog_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "quote_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "data_source": {"$ref": "#/$defs/DataSourceMetadataWireRecord"}
       }
     },
     "FusionWireRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["channels", "limit"],
+      "required": ["channels"],
       "properties": {
+        "domain_pack_id": {"$ref": "#/$defs/DomainPackId", "default": "normal-3c-v1"},
         "channels": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["channel", "items"],
-            "properties": {
-              "channel": {"$ref": "#/$defs/WireRetrievalChannel"},
-              "items": {"type": "array", "items": {"$ref": "#/$defs/CandidateWireRecord"}}
-            }
-          }
+          "maxItems": 3,
+          "items": {"$ref": "#/$defs/FusionChannelWireRecord"}
         },
-        "limit": {"type": "integer"}
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 8}
       }
     },
     "BundleOptimizationWireRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["items", "requested_categories", "intent", "top_n"],
+      "required": ["items", "requested_categories", "intent"],
       "properties": {
-        "items": {"type": "array", "items": {"$ref": "#/$defs/CandidateWireRecord"}},
-        "requested_categories": {"type": "array", "items": {"$ref": "#/$defs/WireProductCategory"}},
+        "domain_pack_id": {"$ref": "#/$defs/DomainPackId", "default": "normal-3c-v1"},
+        "items": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/CandidateWireRecord"}},
+        "requested_categories": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/WireProductCategory"}},
         "intent": {"type": "string", "enum": ["precise", "catalog", "exploratory", "bundle", "compare"]},
-        "budget_max": {"type": ["number", "null"]},
-        "top_n": {"type": "integer"}
+        "budget_max": {"type": ["number", "null"], "minimum": 0, "default": null},
+        "top_n": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3}
       }
     }
   }

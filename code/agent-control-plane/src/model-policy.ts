@@ -14,9 +14,8 @@ import type {
 import type { PiRuntimeFactory } from "./pi-runtime.js";
 import type { RoleExecutionResult } from "./role-agent.js";
 import { buildRetrievalPlan } from "./router.js";
-import { NORMAL_3C_DOMAIN, SUPPORTED_PRODUCT_CATEGORIES } from "./domain-pack.js";
+import { NORMAL_3C_DOMAIN, type CommerceDomainPack } from "./domain-pack.js";
 
-const PRODUCT_CATEGORIES = SUPPORTED_PRODUCT_CATEGORIES;
 const CHANNELS = new Set<RetrievalChannel>(["search", "recommendation", "ads"]);
 const INTENTS = new Set<RetrievalPlan["intent"]>([
   "precise",
@@ -25,18 +24,11 @@ const INTENTS = new Set<RetrievalPlan["intent"]>([
   "bundle",
   "compare",
 ]);
-const USE_CASES = new Set(NORMAL_3C_DOMAIN.useCases);
-
-const CATEGORY_CONTRACT = NORMAL_3C_DOMAIN.categories.map((item) => item.id).join("|");
-const USE_CASE_CONTRACT = NORMAL_3C_DOMAIN.useCases.join("|");
-
 export const ROLE_PROPOSAL_CONTRACTS = {
-  retrievalPlan:
-    `{"intent":"precise|catalog|exploratory|bundle|compare","query":"grounded rewrite","requestedCategories":["${CATEGORY_CONTRACT}"],"preferredBrands":["brand"],"useCases":["${USE_CASE_CONTRACT}"],"channels":["search|recommendation|ads"],"sponsoredAllowed":boolean,"candidateBudget":{"search":1-20,"recommendation":1-20,"ads":0-8},"reason":"short grounded reason"}`,
   channelRanking:
     '{"rankedSkuIds":["only SKU ids present in candidates"],"rationaleBySku":{"sku-id":"short reason grounded in candidate fields"}}',
   handoff:
-    '{"candidateSkuIds":["only phone SKU ids useful as recommendation context"]}',
+    '{"candidateSkuIds":["only primary-category SKU ids useful as recommendation context"]}',
   bundle:
     '{"rankedSkuIds":["one primary SKU followed by requested accessory SKU ids"],"reason":"short selection strategy; no invented facts"}',
   offerIds: '{"offerIds":["exact offer ids from items"]}',
@@ -50,6 +42,12 @@ export const ROLE_PROPOSAL_CONTRACTS = {
   cartDecision:
     '{"decision":"create|reject","reason":"short reason based only on supplied deterministic violations"}',
 } as const;
+
+export function retrievalPlanProposalContract(domain: CommerceDomainPack): string {
+  const categories = domain.categories.map((item) => item.id).join("|");
+  const useCases = domain.useCases.join("|");
+  return `{"intent":"precise|catalog|exploratory|bundle|compare","query":"grounded rewrite","requestedCategories":["${categories}"],"preferredBrands":["brand"],"useCases":["${useCases}"],"channels":["search|recommendation|ads"],"sponsoredAllowed":boolean,"candidateBudget":{"search":1-20,"recommendation":1-20,"ads":0-8},"reason":"short grounded reason"}`;
+}
 
 export const ROLE_SYSTEM_PROMPTS: Record<AgentRole, string> = {
   lead:
@@ -103,8 +101,11 @@ function resolution<T>(payload: T, corrections: string[]): RoleExecutionResult<T
 export function resolveRetrievalPlan(
   message: string,
   proposal: unknown,
+  domain: CommerceDomainPack = NORMAL_3C_DOMAIN,
 ): RoleExecutionResult<RetrievalPlan> {
-  const baseline = buildRetrievalPlan(message);
+  const baseline = buildRetrievalPlan(message, domain);
+  const productCategories = new Set(domain.categories.map((item) => item.id));
+  const useCasesContract = new Set(domain.useCases);
   const raw = object(proposal);
   if (!raw) return resolution(baseline, ["proposal_not_object"]);
   const corrections: string[] = [];
@@ -125,7 +126,7 @@ export function resolveRetrievalPlan(
 
   const proposedCategories = stringArray(raw.requestedCategories);
   const validCategories = (proposedCategories ?? []).filter(
-    (item): item is ProductCategory => PRODUCT_CATEGORIES.has(item as ProductCategory),
+    (item): item is ProductCategory => productCategories.has(item as ProductCategory),
   );
   if (proposedCategories && validCategories.length !== proposedCategories.length) {
     corrections.push("unsupported_category_removed");
@@ -140,7 +141,7 @@ export function resolveRetrievalPlan(
   }
 
   const proposedUseCases = stringArray(raw.useCases);
-  const validUseCases = (proposedUseCases ?? []).filter((item) => USE_CASES.has(item));
+  const validUseCases = (proposedUseCases ?? []).filter((item) => useCasesContract.has(item));
   const useCases = [...new Set([...baseline.requirements.useCases, ...validUseCases])];
   if (proposedUseCases && validUseCases.length !== proposedUseCases.length) {
     corrections.push("unsupported_use_case_removed");
@@ -296,12 +297,13 @@ export function resolveChannelRanking(
 export function resolveHandoff(
   candidates: CandidateEnvelope[],
   proposal: unknown,
+  domain: CommerceDomainPack = NORMAL_3C_DOMAIN,
 ): RoleExecutionResult<PeerHandoff> {
   const raw = object(proposal);
   const requested = stringArray(raw?.candidateSkuIds, 12);
   const allowed = new Map(
     candidates.filter((item) =>
-      item.product.category === NORMAL_3C_DOMAIN.primaryCategory
+      item.product.category === domain.primaryCategory
     )
       .map((item) => [item.product.skuId, item]),
   );

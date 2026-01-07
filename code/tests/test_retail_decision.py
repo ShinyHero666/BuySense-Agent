@@ -24,6 +24,8 @@ class RetailDecisionServiceTest(unittest.TestCase):
         self.assertEqual(result["review_snapshot_version"], "review-aspects-v1")
         self.assertEqual(result["products"][0]["product_id"], "spu-honor-200")
         self.assertGreater(result["products"][0]["sample_size"], 0)
+        self.assertEqual(result["data_source"]["source"], "local_snapshot")
+        self.assertEqual(result["products"][0]["source"], "local_snapshot")
         self.assertEqual(result["missing_product_ids"], ["spu-missing"])
 
     def test_compatibility_graph_returns_paths_and_rejects_camera_charger(self) -> None:
@@ -57,6 +59,9 @@ class RetailDecisionServiceTest(unittest.TestCase):
         )
         self.assertTrue(result["quote_batch_id"].startswith("quote-batch-"))
         self.assertTrue(result["quote_version"].startswith("realtime-"))
+        self.assertEqual(
+            result["data_source"]["source_version"], result["quote_version"]
+        )
         self.assertEqual(result["quotes"][0]["status"], "active")
         self.assertEqual(result["quotes"][0]["amount"], 2799)
         self.assertEqual(result["quotes"][1]["status"], "unavailable")
@@ -65,6 +70,99 @@ class RetailDecisionServiceTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.service.review_aspects(
                 {"product_ids": ["spu-honor-200"], "include_raw_reviews": True}
+            )
+
+    def test_bundle_optimizer_rejects_an_empty_category_scope(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError, "requested_categories: must contain at least one category"
+        ):
+            self.service.optimize_bundles(
+                {
+                    "items": [],
+                    "requested_categories": [],
+                    "intent": "precise",
+                }
+            )
+
+    def test_bundle_optimizer_rejects_unknown_categories_and_intents(self) -> None:
+        with self.assertRaisesRegex(
+            ValidationError, "requested_categories: contains categories outside"
+        ):
+            self.service.optimize_bundles(
+                {
+                    "items": [],
+                    "requested_categories": ["camp_stove"],
+                    "intent": "bundle",
+                }
+            )
+        with self.assertRaisesRegex(ValidationError, "intent: is unsupported"):
+            self.service.optimize_bundles(
+                {
+                    "items": [],
+                    "requested_categories": ["phone"],
+                    "intent": "unsupported",
+                }
+            )
+        with self.assertRaisesRegex(ValidationError, "intent: must be a non-empty"):
+            self.service.optimize_bundles(
+                {
+                    "items": [],
+                    "requested_categories": ["phone"],
+                    "intent": " bundle ",
+                }
+            )
+        with self.assertRaisesRegex(ValidationError, "surrounding whitespace"):
+            self.service.optimize_bundles(
+                {
+                    "items": [],
+                    "requested_categories": [" phone "],
+                    "intent": "bundle",
+                }
+            )
+
+    def test_fusion_rejects_candidate_numeric_type_errors(self) -> None:
+        from shoprec.retail_discovery import RetailDiscoveryService
+
+        result = RetailDiscoveryService(self.service.catalog).search(
+            {
+                "query": "拍照手机",
+                "requested_categories": ["phone"],
+                "use_cases": ["拍照"],
+                "preferred_brands": [],
+                "primary_product_ids": [],
+                "max_price": 7000,
+                "limit": 8,
+                "sponsored_allowed": True,
+            }
+        )
+        malformed = {**result["items"][0], "channel_score": "boom"}
+        with self.assertRaisesRegex(ValidationError, "channel_score: must be a finite"):
+            self.service.fuse(
+                {"channels": [{"channel": "search", "items": [malformed]}]}
+            )
+        with self.assertRaisesRegex(ValidationError, "unknown fields: unexpected"):
+            self.service.fuse(
+                {
+                    "channels": [
+                        {
+                            "channel": "search",
+                            "items": result["items"],
+                            "unexpected": True,
+                        }
+                    ]
+                }
+            )
+        with self.assertRaisesRegex(ValidationError, "catalog_version: must be"):
+            self.service.fuse(
+                {
+                    "channels": [
+                        {
+                            "channel": "search",
+                            "items": result["items"],
+                            "catalog_version": 1,
+                        }
+                    ]
+                }
             )
 
     def test_rrf_fusion_protects_organic_quality_and_discloses_ads(self) -> None:

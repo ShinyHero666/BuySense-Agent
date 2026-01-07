@@ -4,50 +4,53 @@ import type {
   RetrievalChannel,
   RetrievalPlan,
 } from "./contracts.js";
-import { NORMAL_3C_DOMAIN } from "./domain-pack.js";
-
-const CATEGORY_TERMS: Array<[ProductCategory, string[]]> = NORMAL_3C_DOMAIN.categories.map(
-  (item) => [item.id, item.terms],
-);
-
-const USE_CASE_TERMS = NORMAL_3C_DOMAIN.useCases;
+import { NORMAL_3C_DOMAIN, type CommerceDomainPack } from "./domain-pack.js";
 
 function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
 function extractBudget(message: string): number | null {
-  const match = message.match(/(?:预算|总价)[^\d]{0,8}(\d{3,6})|(?:不超过|控制在)\s*(\d{3,6})/);
+  const match = message.match(/(?:预算|总价)[^\d]{0,8}(\d{1,9})|(?:不超过|控制在)\s*(\d{1,9})/);
   const raw = match?.[1] ?? match?.[2];
-  return raw ? Number(raw) : null;
+  if (raw === undefined) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-export function buildRetrievalPlan(message: string): RetrievalPlan {
+export function buildRetrievalPlan(
+  message: string,
+  domain: CommerceDomainPack = NORMAL_3C_DOMAIN,
+): RetrievalPlan {
+  const categoryTerms: Array<[ProductCategory, string[]]> = domain.categories.map(
+    (item) => [item.id, item.terms],
+  );
   const normalized = message.normalize("NFKC").trim().toLowerCase();
   if (!normalized) {
     throw new Error("message must not be empty");
   }
 
-  const isBundle = ["搭配", "套装", "一套", "配一个"].some((term) =>
+  const bundleLanguage = ["搭配", "套装", "一套", "配一个"].some((term) =>
     normalized.includes(term),
   );
   const explicitlyRequestedCategories = unique(
-    CATEGORY_TERMS.filter(([, terms]) => terms.some((term) => normalized.includes(term))).map(
+    categoryTerms.filter(([, terms]) => terms.some((term) => normalized.includes(term))).map(
       ([category]) => category,
     ),
   );
+  const isBundle = bundleLanguage || explicitlyRequestedCategories.length > 1;
   const requestedCategories = [...explicitlyRequestedCategories];
   if (requestedCategories.length === 0) {
-    requestedCategories.push(NORMAL_3C_DOMAIN.defaultCategory);
+    requestedCategories.push(domain.defaultCategory);
     if (isBundle) {
-      requestedCategories.splice(0, requestedCategories.length, ...NORMAL_3C_DOMAIN.defaultBundleCategories);
+      requestedCategories.splice(0, requestedCategories.length, ...domain.defaultBundleCategories);
     }
-  } else if (isBundle && !requestedCategories.includes(NORMAL_3C_DOMAIN.primaryCategory)) {
-    requestedCategories.unshift(NORMAL_3C_DOMAIN.primaryCategory);
+  } else if (isBundle && !requestedCategories.includes(domain.primaryCategory)) {
+    requestedCategories.unshift(domain.primaryCategory);
   }
 
   const preferredBrands: string[] = [];
-  for (const brand of NORMAL_3C_DOMAIN.brands) {
+  for (const brand of domain.brands) {
     if (brand.terms.some((term) => normalized.includes(term))) preferredBrands.push(brand.name);
   }
 
@@ -86,7 +89,7 @@ export function buildRetrievalPlan(message: string): RetrievalPlan {
     turnId,
     status: "active",
   }));
-  const useCases = USE_CASE_TERMS.filter((term) => normalized.includes(term));
+  const useCases = domain.useCases.filter((term) => normalized.includes(term));
   useCases.forEach((useCase, index) => constraints.push({
     constraintId: `constraint-use-case-${index}`,
     field: "useCases",
@@ -109,12 +112,18 @@ export function buildRetrievalPlan(message: string): RetrievalPlan {
 
   let intent: RetrievalPlan["intent"] = "catalog";
   if (isBundle) intent = "bundle";
+  else if (["对比", "比较"].some((term) => normalized.includes(term))) {
+    intent = "compare";
+  }
   else if (["推荐", "适合", "怎么选", "帮我选"].some((term) => normalized.includes(term))) {
     intent = "exploratory";
-  } else if (/iphone\s*\d+|\b\d{2,3}w\b/.test(normalized)) {
+  } else if (
+    domain.protocolTerms.some((term) => normalized.includes(term.toLowerCase())) ||
+    (/[a-z0-9]/u.test(normalized) && domain.brands.some((brand) =>
+      brand.terms.some((term) => normalized.includes(term.toLowerCase()))
+    ))
+  ) {
     intent = "precise";
-  } else if (["对比", "比较"].some((term) => normalized.includes(term))) {
-    intent = "compare";
   }
 
   const sponsoredAllowed = !["不要广告", "不看广告", "无广告"].some((term) =>

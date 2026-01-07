@@ -1,0 +1,50 @@
+[
+  {
+    "case_id": "camping-v1-001",
+    "message": "预算 900 元，帮我搭配一套适合高海拔露营的防风炉具、气罐和锅具，不要广告",
+    "expected_intent": "bundle",
+    "expected_categories": ["camp_stove", "fuel_canister", "cookware"],
+    "sponsored_allowed": false,
+    "relevant_spu_ids": ["spu-trailforge-alpine-stove", "spu-trailforge-four-season-gas", "spu-ridgecook-titanium-pot"]
+  },
+  {
+    "case_id": "camping-v1-002",
+    "message": "推荐一个轻量防风的露营炉头",
+    "expected_intent": "exploratory",
+    "expected_categories": ["camp_stove"],
+    "sponsored_allowed": true,
+    "relevant_spu_ids": ["spu-trailforge-alpine-stove"]
+  },
+  {
+    "case_id": "camping-v1-003",
+    "message": "给 TrailForge 高山炉配兼容的气罐和锅具",
+    "expected_intent": "bundle",
+    "expected_categories": ["camp_stove", "fuel_canister", "cookware"],
+    "sponsored_allowed": true,
+    "relevant_spu_ids": ["spu-trailforge-four-season-gas", "spu-ridgecook-titanium-pot"]
+  },
+  {
+    "case_id": "camping-v1-004",
+    "message": "比较适合双人营地的套锅",
+    "expected_intent": "compare",
+    "expected_categories": ["cookware"],
+    "sponsored_allowed": true,
+    "relevant_spu_ids": ["spu-campnova-family-cookset"]
+  },
+  {
+    "case_id": "camping-v1-005",
+    "message": "不要广告，推荐低温高海拔用的气罐",
+    "expected_intent": "exploratory",
+    "expected_categories": ["fuel_canister"],
+    "sponsored_allowed": false,
+    "relevant_spu_ids": ["spu-trailforge-four-season-gas"]
+  },
+  {
+    "case_id": "camping-v1-006",
+    "message": "想看便携卡式炉和卡式气罐套装",
+    "expected_intent": "bundle",
+    "expected_categories": ["camp_stove", "fuel_canister"],
+    "sponsored_allowed": true,
+    "relevant_spu_ids": ["spu-easyflame-cassette-stove", "spu-easyflame-butane-cassette"]
+  }
+]

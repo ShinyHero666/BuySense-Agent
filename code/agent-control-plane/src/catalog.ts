@@ -6,7 +6,7 @@ const QUOTE_VALID_UNTIL = "2099-01-01T00:00:00Z";
 
 type CatalogSeed = Omit<
   CatalogProduct,
-  "spuId" | "offerId" | "currency" | "quoteVersion" | "quoteValidUntil"
+  "spuId" | "offerId" | "currency" | "quoteVersion" | "quoteValidUntil" | "dataSource"
 >;
 
 const DEMO_CATALOG_SEEDS: CatalogSeed[] = [
@@ -184,4 +184,9 @@ export const DEMO_CATALOG: CatalogProduct[] = DEMO_CATALOG_SEEDS.map((product) =
   currency: "CNY",
   quoteVersion: QUOTE_VERSION,
   quoteValidUntil: QUOTE_VALID_UNTIL,
+  dataSource: {
+    source: "local_snapshot",
+    sourceVersion: VERSION,
+    providerId: "normal-3c-v1",
+  },
 }));

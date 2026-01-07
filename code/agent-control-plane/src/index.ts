@@ -7,6 +7,7 @@ export * from "./collaboration.js";
 export * from "./contracts.js";
 export * from "./evidence.js";
 export * from "./evaluation.js";
+export * from "./extension-registry.js";
 export * from "./fusion.js";
 export * from "./metrics.js";
 export * from "./model-policy.js";

@@ -6,13 +6,14 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .generated_contracts_v2 import DiscoveryWireRequest, DiscoveryWireResponse
+from .retail_data_ports import DataSourceMetadata
 from .retail_models import (
-    PRODUCT_CATEGORIES,
     RetailCatalogItem,
     RetailCatalogSnapshot,
     load_retail_catalog,
 )
-from .retail_domain import COMMERCE_TERMS, DEFAULT_CATEGORY, PRIMARY_CATEGORY
+from .retail_domain import NORMAL_3C_DOMAIN_PACK_MODEL, RetailDomainPack
 from .validation import (
     ValidationError,
     boolean_value,
@@ -49,10 +50,20 @@ def _clamp(value: float) -> float:
 
 
 class RetailDiscoveryService:
-    """Read-only normal-commerce search, recommendation and ads data plane."""
+    """Read-only, Domain-Pack-backed search, recommendation and ads data plane."""
 
-    def __init__(self, catalog: RetailCatalogSnapshot | None = None) -> None:
-        self.catalog = catalog or load_retail_catalog()
+    def __init__(
+        self,
+        catalog: RetailCatalogSnapshot | None = None,
+        *,
+        pack: RetailDomainPack | None = None,
+        catalog_metadata: DataSourceMetadata | None = None,
+    ) -> None:
+        self.pack = pack or NORMAL_3C_DOMAIN_PACK_MODEL
+        self.catalog = catalog or load_retail_catalog(pack=self.pack)
+        self.catalog_metadata = catalog_metadata or DataSourceMetadata(
+            "local_snapshot", self.catalog.catalog_version, self.pack.pack_id
+        )
         self.items = self.catalog.sellable_items()
         self.items_by_product_id = {item.spu.spu_id: item for item in self.items}
 
@@ -77,8 +88,7 @@ class RetailDiscoveryService:
             raise ValidationError("max_price", "must be a finite non-negative number")
         return result
 
-    @classmethod
-    def _request(cls, payload: dict[str, Any]) -> RetailDiscoveryRequest:
+    def _request(self, payload: dict[str, Any]) -> RetailDiscoveryRequest:
         payload = require_mapping(payload)
         reject_unknown_fields(
             payload,
@@ -99,20 +109,24 @@ class RetailDiscoveryService:
                 "ad_exposure_product_ids",
             },
         )
-        categories = cls._string_tuple(payload, "requested_categories")
-        unknown_categories = set(categories) - PRODUCT_CATEGORIES
+        categories = self._string_tuple(payload, "requested_categories")
+        if any(category != category.strip() for category in payload.get("requested_categories", [])):
+            raise ValidationError(
+                "requested_categories", "values must not contain surrounding whitespace"
+            )
+        unknown_categories = set(categories) - self.pack.product_categories
         if unknown_categories:
             raise ValidationError(
                 "requested_categories",
                 "unknown values: " + ", ".join(sorted(unknown_categories)),
             )
         return RetailDiscoveryRequest(
-            query=string_value(payload, "query", "", max_length=256),
-            requested_categories=categories or (DEFAULT_CATEGORY,),
-            use_cases=cls._string_tuple(payload, "use_cases"),
-            preferred_brands=cls._string_tuple(payload, "preferred_brands"),
-            primary_product_ids=cls._string_tuple(payload, "primary_product_ids"),
-            max_price=cls._optional_price(payload),
+            query=string_value(payload, "query", "", max_length=4096),
+            requested_categories=categories or (self.pack.default_category,),
+            use_cases=self._string_tuple(payload, "use_cases"),
+            preferred_brands=self._string_tuple(payload, "preferred_brands"),
+            primary_product_ids=self._string_tuple(payload, "primary_product_ids"),
+            max_price=self._optional_price(payload),
             limit=integer_value(payload, "limit", 8, minimum=1, maximum=100),
             sponsored_allowed=boolean_value(payload, "sponsored_allowed", True),
             identity_id=string_value(payload, "identity_id", "", max_length=128),
@@ -120,20 +134,19 @@ class RetailDiscoveryService:
             personalization_enabled=boolean_value(
                 payload, "personalization_enabled", True
             ),
-            recent_product_ids=cls._string_tuple(payload, "recent_product_ids"),
-            excluded_product_ids=cls._string_tuple(payload, "excluded_product_ids"),
-            ad_exposure_product_ids=cls._string_tuple(
+            recent_product_ids=self._string_tuple(payload, "recent_product_ids"),
+            excluded_product_ids=self._string_tuple(payload, "excluded_product_ids"),
+            ad_exposure_product_ids=self._string_tuple(
                 payload, "ad_exposure_product_ids"
             ),
         )
 
-    @staticmethod
-    def _term_fit(item: RetailCatalogItem, request: RetailDiscoveryRequest) -> float:
+    def _term_fit(self, item: RetailCatalogItem, request: RetailDiscoveryRequest) -> float:
         haystack = " ".join(
             (item.spu.title, item.sku.title, item.spu.brand, *item.spu.tags)
         ).lower()
         normalized_query = request.query.lower()
-        query_terms = [term for term in COMMERCE_TERMS if term in normalized_query]
+        query_terms = [term for term in self.pack.commerce_terms if term in normalized_query]
         query_terms.extend(
             token
             for token in re.findall(r"[a-z][a-z0-9-]{1,20}|\d{2,3}w", normalized_query)
@@ -182,17 +195,15 @@ class RetailDiscoveryService:
             and item.spu.spu_id not in request.excluded_product_ids
         )
 
-    @staticmethod
     def _primary_accessory_eligible(
-        item: RetailCatalogItem, request: RetailDiscoveryRequest
+        self, item: RetailCatalogItem, request: RetailDiscoveryRequest
     ) -> bool:
-        if PRIMARY_CATEGORY not in request.requested_categories:
+        if self.pack.primary_category not in request.requested_categories:
             return True
-        if item.spu.category not in {"charger", "cable"}:
+        requirement = self.pack.category_requirements.get(item.spu.category)
+        if requirement is None:
             return True
-        return "usb-c" in item.sku.connectors and any(
-            protocol in {"usb-pd", "pps"} for protocol in item.sku.protocols
-        )
+        return requirement.accepts(item.sku.connectors, item.sku.protocols)
 
     def _candidate(
         self,
@@ -247,19 +258,22 @@ class RetailDiscoveryService:
             )
         return selected
 
-    def _response(self, channel: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    def _response(
+        self, channel: str, items: list[dict[str, Any]]
+    ) -> DiscoveryWireResponse:
         return {
             "channel": channel,
             "catalog_version": self.catalog.catalog_version,
             "quote_version": self.catalog.quote_version,
+            "data_source": self.catalog_metadata.to_wire(),
             "items": items,
         }
 
-    def search(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def search(self, payload: DiscoveryWireRequest) -> DiscoveryWireResponse:
         request = self._request(payload)
         primary_category = (
-            PRIMARY_CATEGORY
-            if PRIMARY_CATEGORY in request.requested_categories
+            self.pack.primary_category
+            if self.pack.primary_category in request.requested_categories
             else request.requested_categories[0]
         )
         candidates: list[dict[str, Any]] = []
@@ -288,14 +302,14 @@ class RetailDiscoveryService:
             )
         return self._response("search", self._top(candidates, request.limit))
 
-    def recommend(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def recommend(self, payload: DiscoveryWireRequest) -> DiscoveryWireResponse:
         request = self._request(payload)
         accessory_categories = {
             category
             for category in request.requested_categories
-            if category != PRIMARY_CATEGORY
+            if category != self.pack.primary_category
         }
-        allowed_categories = accessory_categories or {PRIMARY_CATEGORY}
+        allowed_categories = accessory_categories or {self.pack.primary_category}
         peer_ecosystems = {
             self.items_by_product_id[product_id].sku.ecosystem
             for product_id in request.primary_product_ids
@@ -345,7 +359,7 @@ class RetailDiscoveryService:
             "recommendation", self._top(candidates, request.limit)
         )
 
-    def ads(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def ads(self, payload: DiscoveryWireRequest) -> DiscoveryWireResponse:
         request = self._request(payload)
         if not request.sponsored_allowed:
             return self._response("ads", [])
@@ -380,5 +394,12 @@ class RetailDiscoveryService:
         return self._response("ads", self._top(candidates, request.limit))
 
 
-def create_retail_discovery_service() -> RetailDiscoveryService:
-    return RetailDiscoveryService()
+def create_retail_discovery_service(
+    catalog: RetailCatalogSnapshot | None = None,
+    *,
+    pack: RetailDomainPack | None = None,
+    catalog_metadata: DataSourceMetadata | None = None,
+) -> RetailDiscoveryService:
+    return RetailDiscoveryService(
+        catalog, pack=pack, catalog_metadata=catalog_metadata
+    )

@@ -89,6 +89,20 @@ export class SearchAdsRecsMetrics {
     this.#now = now;
   }
 
+  /** Combine independently scoped Domain Pack metrics into one service view. */
+  static aggregate(
+    metrics: Iterable<SearchAdsRecsMetrics>,
+    now: () => number = Date.now,
+  ): AgentMetricSnapshot {
+    const combined = new SearchAdsRecsMetrics(now);
+    const keys = Object.keys(combined.#counters) as Array<keyof AgentMetricCounters>;
+    for (const metric of metrics) {
+      const counters = metric.snapshot().counters;
+      for (const key of keys) combined.#counters[key] += counters[key];
+    }
+    return combined.snapshot();
+  }
+
   recordProposal(reply: SearchAdsRecsReply): void {
     const counters = this.#counters;
     counters.purchase_intent_sessions += 1;

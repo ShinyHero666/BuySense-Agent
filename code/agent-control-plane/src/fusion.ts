@@ -9,7 +9,7 @@ import type {
   RetrievalPlan,
   ReviewEvidenceBatch,
 } from "./contracts.js";
-import { NORMAL_3C_DOMAIN } from "./domain-pack.js";
+import { NORMAL_3C_DOMAIN, type CommerceDomainPack } from "./domain-pack.js";
 
 export function fuseSlate(results: ChannelResult[], limit = 8): CandidateEnvelope[] {
   const weights = { search: 1, recommendation: 0.9, ads: 0.55 } as const;
@@ -82,7 +82,10 @@ export async function proposeBundle(
   plan: RetrievalPlan,
   evidence: DecisionEvidenceGateway,
   preferredSkuIds: string[] = [],
+  domain: CommerceDomainPack = NORMAL_3C_DOMAIN,
+  signal?: AbortSignal,
 ): Promise<BundleProposal> {
+  signal?.throwIfAborted();
   const preferredRank = new Map(preferredSkuIds.map((skuId, index) => [skuId, index]));
   const orderedSlate = [...slate].sort((left, right) => {
     const leftRank = preferredRank.get(left.product.skuId) ?? Number.MAX_SAFE_INTEGER;
@@ -90,11 +93,11 @@ export async function proposeBundle(
     return leftRank === rightRank ? 0 : leftRank - rightRank;
   });
   const primaryCategory = plan.requirements.requestedCategories.includes(
-    NORMAL_3C_DOMAIN.primaryCategory,
+    domain.primaryCategory,
   )
-    ? NORMAL_3C_DOMAIN.primaryCategory
-    : (plan.requirements.requestedCategories[0] ?? NORMAL_3C_DOMAIN.defaultCategory);
-  const requestedAccessories = primaryCategory === NORMAL_3C_DOMAIN.primaryCategory &&
+    ? domain.primaryCategory
+    : (plan.requirements.requestedCategories[0] ?? domain.defaultCategory);
+  const requestedAccessories = primaryCategory === domain.primaryCategory &&
     plan.intent === "bundle"
     ? plan.requirements.requestedCategories.filter((category) => category !== primaryCategory)
     : [];
@@ -131,10 +134,11 @@ export async function proposeBundle(
     score: number;
   }> = [];
   for (const primary of primaryCandidates) {
+    signal?.throwIfAborted();
     const accessoryCandidates = requestedAccessories.flatMap(
       (category) => candidatesByCategory.get(category) ?? [],
     );
-    const results = await evidence.checkCompatibility(primary, accessoryCandidates);
+    const results = await evidence.checkCompatibility(primary, accessoryCandidates, signal);
     const compatibleByProduct = new Map(results.map((result) => [result.accessoryId, result]));
     const choose = (
       categoryIndex: number,
@@ -235,17 +239,18 @@ export function auditProposal(
   bundle: BundleProposal,
   priceQuote: PriceQuoteBatch,
   reviewEvidence: ReviewEvidenceBatch,
+  domain: CommerceDomainPack = NORMAL_3C_DOMAIN,
 ): Critique {
   const topThreeAds = slate.slice(0, 3).filter((candidate) => candidate.sponsored).length;
   const bundleCategories = new Set(bundle.items.map((item) => item.product.category));
   const primaryCategory = plan.requirements.requestedCategories.includes(
-    NORMAL_3C_DOMAIN.primaryCategory,
+    domain.primaryCategory,
   )
-    ? NORMAL_3C_DOMAIN.primaryCategory
-    : (plan.requirements.requestedCategories[0] ?? NORMAL_3C_DOMAIN.defaultCategory);
+    ? domain.primaryCategory
+    : (plan.requirements.requestedCategories[0] ?? domain.defaultCategory);
   const requiredBundleCategories: ProductCategory[] = plan.intent === "bundle"
     ? plan.requirements.requestedCategories.filter((category) =>
-        NORMAL_3C_DOMAIN.defaultBundleCategories.includes(category),
+        domain.defaultBundleCategories.includes(category),
       )
     : [primaryCategory];
   const quoteVersions = new Set(bundle.items.map((item) => item.product.quoteVersion));
@@ -268,6 +273,12 @@ export function auditProposal(
         item.product.quoteValidUntil.length > 0 &&
         item.product.price >= 0,
     ),
+    catalog_provenance_versioned: bundle.items.every(
+      (item) =>
+        ["local_snapshot", "remote_provider"].includes(item.product.dataSource.source) &&
+        item.product.dataSource.sourceVersion === item.product.catalogVersion &&
+        item.product.dataSource.providerId.length > 0,
+    ),
     quote_version_consistent: quoteVersions.size <= 1,
     single_supported_currency: currencies.size <= 1 &&
       [...currencies].every((currency) => currency === "CNY"),
@@ -282,12 +293,23 @@ export function auditProposal(
     live_quote_version_applied: bundle.items.every(
       (item) => item.product.quoteVersion === priceQuote.quoteVersion,
     ),
+    price_quote_provenance_versioned:
+      ["local_snapshot", "remote_provider"].includes(priceQuote.dataSource.source) &&
+      priceQuote.dataSource.sourceVersion === priceQuote.quoteVersion &&
+      priceQuote.dataSource.providerId.length > 0,
     review_evidence_coverage: bundle.items.every((item) =>
       reviewedProducts.has(item.product.productId),
     ) && reviewEvidence.missingProductIds.length === 0,
     review_evidence_versioned: reviewEvidence.reviewSnapshotVersion.length > 0 &&
+      ["local_snapshot", "remote_provider"].includes(reviewEvidence.dataSource.source) &&
+      reviewEvidence.dataSource.sourceVersion === reviewEvidence.reviewSnapshotVersion &&
+      reviewEvidence.dataSource.providerId.length > 0 &&
       reviewEvidence.products.every(
-        (item) => item.source === "synthetic_review_snapshot" && item.aspects.length > 0,
+        (item) =>
+          item.source === reviewEvidence.dataSource.source &&
+          item.sourceVersion === reviewEvidence.dataSource.sourceVersion &&
+          item.providerId === reviewEvidence.dataSource.providerId &&
+          item.aspects.length > 0,
       ),
     sponsored_disclosed: slate
       .filter((candidate) => candidate.sponsored)

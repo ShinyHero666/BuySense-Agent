@@ -9,7 +9,7 @@ import type {
   RetrievalChannel,
   RetrievalPlan,
 } from "./contracts.js";
-import { NORMAL_3C_DOMAIN } from "./domain-pack.js";
+import { NORMAL_3C_DOMAIN, type CommerceDomainPack } from "./domain-pack.js";
 
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -36,15 +36,19 @@ function eligible(product: CatalogProduct, plan: RetrievalPlan): boolean {
   return categoryFit(product, plan) > 0;
 }
 
-function accessoryEligible(product: CatalogProduct, plan: RetrievalPlan): boolean {
-  if (!plan.requirements.requestedCategories.includes(NORMAL_3C_DOMAIN.primaryCategory)) return true;
-  if (product.category === "charger" || product.category === "cable") {
-    return (
-      product.connectors.includes("usb-c") &&
-      product.protocols.some((protocol) => ["usb-pd", "pps"].includes(protocol))
-    );
-  }
-  return true;
+function accessoryEligible(
+  product: CatalogProduct,
+  plan: RetrievalPlan,
+  domain: CommerceDomainPack,
+): boolean {
+  if (!plan.requirements.requestedCategories.includes(domain.primaryCategory)) return true;
+  const requirement = domain.categoryRequirements[product.category];
+  if (!requirement) return true;
+  const connectorMatch = requirement.connectorsAny.length === 0 ||
+    requirement.connectorsAny.some((value) => product.connectors.includes(value));
+  const protocolMatch = requirement.protocolsAny.length === 0 ||
+    requirement.protocolsAny.some((value) => product.protocols.includes(value));
+  return connectorMatch && protocolMatch;
 }
 
 function normalize(candidates: CandidateEnvelope[]): CandidateEnvelope[] {
@@ -89,14 +93,17 @@ function top(
 }
 
 export class InMemoryDiscoveryChannels implements DiscoveryChannels {
-  constructor(private readonly catalog: CatalogProduct[] = DEMO_CATALOG) {}
+  constructor(
+    private readonly catalog: CatalogProduct[] = DEMO_CATALOG,
+    private readonly domain: CommerceDomainPack = NORMAL_3C_DOMAIN,
+  ) {}
 
   async search(plan: RetrievalPlan, _context: DiscoveryContext = {}): Promise<ChannelResult> {
     const primaryCategory: ProductCategory = plan.requirements.requestedCategories.includes(
-      NORMAL_3C_DOMAIN.primaryCategory,
+      this.domain.primaryCategory,
     )
-      ? NORMAL_3C_DOMAIN.primaryCategory
-      : (plan.requirements.requestedCategories[0] ?? NORMAL_3C_DOMAIN.defaultCategory);
+      ? this.domain.primaryCategory
+      : (plan.requirements.requestedCategories[0] ?? this.domain.defaultCategory);
     const candidates = this.catalog
       .filter((product) => eligible(product, plan) && product.category === primaryCategory)
       .map((product) => {
@@ -112,6 +119,7 @@ export class InMemoryDiscoveryChannels implements DiscoveryChannels {
       });
     return {
       channel: "search",
+      ...(this.catalog[0] ? { dataSource: this.catalog[0].dataSource } : {}),
       candidates: top(candidates, plan.candidateBudget.search),
     };
   }
@@ -119,18 +127,18 @@ export class InMemoryDiscoveryChannels implements DiscoveryChannels {
   async recommend(plan: RetrievalPlan, context: DiscoveryContext = {}): Promise<ChannelResult> {
     const accessoryCategories = new Set<ProductCategory>(
       plan.requirements.requestedCategories.filter(
-        (category) => category !== NORMAL_3C_DOMAIN.primaryCategory,
+        (category) => category !== this.domain.primaryCategory,
       ),
     );
     const allowed = accessoryCategories.size > 0
       ? accessoryCategories
-      : new Set([NORMAL_3C_DOMAIN.primaryCategory] as ProductCategory[]);
+      : new Set([this.domain.primaryCategory] as ProductCategory[]);
     const candidates = this.catalog
       .filter(
         (product) =>
           eligible(product, plan) &&
           allowed.has(product.category) &&
-          accessoryEligible(product, plan),
+          accessoryEligible(product, plan, this.domain),
       )
       .map((product) => {
         const terms = termFit(product, plan);
@@ -138,7 +146,7 @@ export class InMemoryDiscoveryChannels implements DiscoveryChannels {
         const peerEcosystems = new Set(
           (context.peerCandidates ?? [])
             .filter((candidate) =>
-              candidate.product.category === NORMAL_3C_DOMAIN.primaryCategory
+              candidate.product.category === this.domain.primaryCategory
             )
             .map((candidate) => candidate.product.ecosystem),
         );
@@ -164,12 +172,19 @@ export class InMemoryDiscoveryChannels implements DiscoveryChannels {
       });
     return {
       channel: "recommendation",
+      ...(this.catalog[0] ? { dataSource: this.catalog[0].dataSource } : {}),
       candidates: top(candidates, plan.candidateBudget.recommendation),
     };
   }
 
   async ads(plan: RetrievalPlan, context: DiscoveryContext = {}): Promise<ChannelResult> {
-    if (!plan.sponsoredAllowed) return { channel: "ads", candidates: [] };
+    if (!plan.sponsoredAllowed) {
+      return {
+        channel: "ads",
+        ...(this.catalog[0] ? { dataSource: this.catalog[0].dataSource } : {}),
+        candidates: [],
+      };
+    }
     const candidates = this.catalog
       .filter((product) =>
         product.sponsored &&
@@ -193,6 +208,7 @@ export class InMemoryDiscoveryChannels implements DiscoveryChannels {
       );
     return {
       channel: "ads",
+      ...(this.catalog[0] ? { dataSource: this.catalog[0].dataSource } : {}),
       candidates: top(candidates, plan.candidateBudget.ads),
     };
   }

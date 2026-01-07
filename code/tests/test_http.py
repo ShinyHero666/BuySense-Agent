@@ -8,6 +8,9 @@ import urllib.error
 import urllib.request
 
 from shoprec.server import Handler, build_server
+from shoprec.retail_decision import create_retail_decision_service
+from shoprec.retail_discovery import RetailDiscoveryService
+from shoprec.retail_models import RetailCatalogSnapshot, load_retail_catalog
 from shoprec.validation import ValidationError
 from tests.support import fixed_service
 
@@ -39,6 +42,9 @@ class HTTPIntegrationTest(unittest.TestCase):
         return urllib.request.urlopen(request, timeout=2)
 
     def test_health_and_search(self) -> None:
+        live = json.load(
+            urllib.request.urlopen(self.base_url + "/health/live", timeout=2)
+        )
         health = json.load(
             urllib.request.urlopen(self.base_url + "/health/ready", timeout=2)
         )
@@ -48,9 +54,80 @@ class HTTPIntegrationTest(unittest.TestCase):
                 {"query": "iphone", "user_id": "u001", "page_size": 2},
             )
         )
+        self.assertEqual(live, {"status": "UP", "service": "moyuan-sar-discovery-v2"})
         self.assertEqual(health["status"], "UP")
+        self.assertTrue(health["ready"])
         self.assertEqual(health["retail_catalog_version"], "normal-3c-snapshot-v1")
+        self.assertGreater(health["components"]["catalog"]["sellable_items"], 0)
         self.assertEqual(len(result["items"]), 2)
+
+    def test_readiness_fails_when_the_catalog_has_no_sellable_items(self) -> None:
+        empty_catalog = RetailCatalogSnapshot(
+            catalog_version="empty-catalog-v1",
+            quote_version="empty-quotes-v1",
+            generated_at="2026-08-01T00:00:00Z",
+            spus=(),
+        )
+        retail_service = RetailDiscoveryService(empty_catalog)
+        server = build_server(
+            "127.0.0.1",
+            0,
+            retail_service=retail_service,
+            retail_decision_service=create_retail_decision_service(empty_catalog),
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            summary = json.load(urllib.request.urlopen(base_url + "/health", timeout=2))
+            self.assertEqual(summary["status"], "DOWN")
+            self.assertFalse(summary["ready"])
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(base_url + "/health/ready", timeout=2)
+            try:
+                self.assertEqual(caught.exception.code, 503)
+                unavailable = json.load(caught.exception)
+                self.assertEqual(
+                    unavailable["components"]["catalog"]["status"], "down"
+                )
+            finally:
+                caught.exception.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_readiness_fails_when_evidence_snapshots_are_empty(self) -> None:
+        catalog = load_retail_catalog()
+        retail_service = RetailDiscoveryService(catalog)
+        decision_service = create_retail_decision_service(catalog)
+        decision_service.reviews.products.clear()
+        decision_service.compatibility.rules = ()
+        server = build_server(
+            "127.0.0.1",
+            0,
+            retail_service=retail_service,
+            retail_decision_service=decision_service,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(base_url + "/health/ready", timeout=2)
+            try:
+                self.assertEqual(caught.exception.code, 503)
+                unavailable = json.load(caught.exception)
+                self.assertEqual(unavailable["components"]["reviews"]["status"], "down")
+                self.assertEqual(
+                    unavailable["components"]["compatibility"]["status"], "down"
+                )
+            finally:
+                caught.exception.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_normal_commerce_discovery_endpoints(self) -> None:
         payload = {

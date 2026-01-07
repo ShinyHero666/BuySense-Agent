@@ -1,4 +1,9 @@
 import type { AgentRole } from "./contracts.js";
+import {
+  DEFAULT_COLLABORATION_GRAPH,
+  type CollaborationGraphDefinition,
+  type DelegatorRole,
+} from "./extension-registry.js";
 import type { TraceCollector } from "./role-agent.js";
 
 export type CollaborationTaskStatus = "queued" | "running" | "completed" | "failed";
@@ -50,44 +55,6 @@ export interface DelegationProposal {
   createdAt: string;
 }
 
-const ALLOWED_DELEGATIONS: Record<AgentRole | "system", ReadonlySet<AgentRole>> = {
-  system: new Set(["lead"]),
-  lead: new Set([
-    "intent_router",
-    "search",
-    "recommendation",
-    "ads",
-    "compatibility",
-    "pricing",
-    "review_evidence",
-    "critic",
-    "lead",
-    "cart",
-  ]),
-  intent_router: new Set(["search", "recommendation", "ads"]),
-  search: new Set(["recommendation"]),
-  recommendation: new Set(["compatibility"]),
-  ads: new Set(["critic"]),
-  compatibility: new Set(["pricing", "review_evidence", "critic"]),
-  pricing: new Set(["cart", "critic"]),
-  review_evidence: new Set(["critic"]),
-  critic: new Set(["recommendation", "lead"]),
-  cart: new Set([]),
-};
-
-const ROLE_CAPABILITIES: Record<AgentRole, ReadonlySet<string>> = {
-  lead: new Set(["calibrated_candidate_fusion", "grounded_response_composition"]),
-  intent_router: new Set(["understand_and_route"]),
-  search: new Set(["search_strategy_and_retrieval"]),
-  recommendation: new Set(["recommendation_strategy_and_retrieval"]),
-  ads: new Set(["ads_strategy_and_retrieval"]),
-  compatibility: new Set(["constraint_bundle_optimization"]),
-  pricing: new Set(["live_quote_tool"]),
-  review_evidence: new Set(["review_aspect_tool"]),
-  critic: new Set(["independent_decision_audit"]),
-  cart: new Set(["confirmed_cart_draft"]),
-};
-
 /**
  * A bounded task board for free Agent collaboration.
  *
@@ -101,6 +68,8 @@ export class BoundedCollaborationCoordinator {
   readonly signal: AbortSignal;
   readonly #startedAt = performance.now();
   readonly #policy: CollaborationPolicy;
+  readonly #allowedDelegations = new Map<DelegatorRole, ReadonlySet<AgentRole>>();
+  readonly #roleCapabilities = new Map<AgentRole, ReadonlySet<string>>();
   #nextTask = 1;
   #running = 0;
   #modelCalls = 0;
@@ -111,8 +80,15 @@ export class BoundedCollaborationCoordinator {
     private readonly runId: string,
     private readonly trace: TraceCollector,
     policy: Partial<CollaborationPolicy> = {},
+    graph: CollaborationGraphDefinition = DEFAULT_COLLABORATION_GRAPH,
   ) {
     this.#policy = { ...DEFAULT_POLICY, ...policy };
+    for (const [source, targets] of Object.entries(graph.allowedDelegations)) {
+      this.#allowedDelegations.set(source as DelegatorRole, new Set(targets));
+    }
+    for (const [role, capabilities] of Object.entries(graph.roleCapabilities)) {
+      this.#roleCapabilities.set(role as AgentRole, new Set(capabilities));
+    }
     this.signal = AbortSignal.timeout(this.#policy.deadlineMs);
   }
 
@@ -152,9 +128,9 @@ export class BoundedCollaborationCoordinator {
     let rejectionReason: string | null = null;
     if (this.proposals.length >= this.#policy.maxDelegationProposals) {
       rejectionReason = "delegation_proposal_budget_exhausted";
-    } else if (!ALLOWED_DELEGATIONS[input.proposedBy].has(input.role)) {
+    } else if (!this.#canDelegate(input.proposedBy, input.role)) {
       rejectionReason = `delegation_edge_denied:${input.proposedBy}->${input.role}`;
-    } else if (!ROLE_CAPABILITIES[input.role].has(input.capability)) {
+    } else if (!this.#hasCapability(input.role, input.capability)) {
       rejectionReason = `delegation_capability_denied:${input.role}:${input.capability}`;
     } else if (!input.reason.trim() || input.reason.length > 500) {
       rejectionReason = "delegation_reason_invalid";
@@ -212,10 +188,10 @@ export class BoundedCollaborationCoordinator {
     execute: (task: CollaborationTask) => Promise<T> | T;
   }): Promise<T> {
     this.#assertDeadline();
-    if (!ALLOWED_DELEGATIONS[input.delegatedBy].has(input.role)) {
+    if (!this.#canDelegate(input.delegatedBy, input.role)) {
       throw new Error(`collaboration_delegation_denied:${input.delegatedBy}->${input.role}`);
     }
-    if (!ROLE_CAPABILITIES[input.role].has(input.capability)) {
+    if (!this.#hasCapability(input.role, input.capability)) {
       throw new Error(`collaboration_capability_denied:${input.role}:${input.capability}`);
     }
     if (this.tasks.length >= this.#policy.maxTasks) {
@@ -277,6 +253,14 @@ export class BoundedCollaborationCoordinator {
     } finally {
       this.#release();
     }
+  }
+
+  #canDelegate(delegatedBy: DelegatorRole, role: AgentRole): boolean {
+    return this.#allowedDelegations.get(delegatedBy)?.has(role) ?? false;
+  }
+
+  #hasCapability(role: AgentRole, capability: string): boolean {
+    return this.#roleCapabilities.get(role)?.has(capability) ?? false;
   }
 
   #assertDeadline(): void {

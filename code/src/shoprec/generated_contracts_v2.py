@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, TypedDict
 
 ConstraintSource = Literal['explicit_user', 'inferred_model', 'catalog', 'system']
 
@@ -14,9 +14,17 @@ RunStatus = Literal['queued', 'running', 'completed', 'failed', 'cancelled']
 
 RunEventType = Literal['run_created', 'run_started', 'task', 'artifact', 'model_execution', 'policy_gate', 'result', 'run_failed', 'run_cancelled']
 
-WireProductCategory = Literal['phone', 'headphones', 'charger', 'cable', 'case']
+CreateRunRequest = dict[str, Any] | dict[str, Any]
+
+DomainPackId = str
+
+WorkflowId = str
+
+WireProductCategory = str
 
 WireRetrievalChannel = Literal['search', 'recommendation', 'ads']
+
+DataSourceKind = Literal['local_snapshot', 'remote_provider']
 
 class RequirementConstraint(TypedDict):
     constraintId: str
@@ -34,58 +42,141 @@ class IdentitySession(TypedDict):
     issuedAt: str
     expiresAt: str
 
-class AgentRun(TypedDict):
+class _AgentRunOptional(TypedDict, total=False):
+    proposalRunId: str | None
+    idempotencyKey: str | None
+    result: Any
+    errorCode: str | None
+
+class AgentRun(_AgentRunOptional):
     runId: str
     identityId: str
     sessionId: str
+    domainPackId: DomainPackId
+    workflowId: WorkflowId
     status: RunStatus
     message: str
     confirmed: bool
-    idempotencyKey: NotRequired[str | None]
-    result: NotRequired[Any]
-    errorCode: NotRequired[str | None]
     createdAt: str
     updatedAt: str
     cancelRequested: bool
 
-class AgentRunEvent(TypedDict):
+class _AgentRunEventOptional(TypedDict, total=False):
+    taskId: str | None
+    parentTaskId: str | None
+
+class AgentRunEvent(_AgentRunEventOptional):
     eventId: str
     runId: str
-    taskId: NotRequired[str | None]
-    parentTaskId: NotRequired[str | None]
     sequence: int
     eventType: RunEventType
     timestamp: str
     schemaVersion: Literal['2.0']
     payload: dict[str, Any]
 
-class CreateRunRequest(TypedDict):
-    message: str
-    confirmed: NotRequired[bool]
-
 class CreateRunResponse(TypedDict):
     runId: str
+    domainPackId: DomainPackId
+    workflowId: WorkflowId
     status: RunStatus
     eventsUrl: str
     runUrl: str
+    idempotentReplay: bool
 
-class DiscoveryWireRequest(TypedDict):
+class DomainPackCategorySummary(TypedDict):
+    id: WireProductCategory
+    label: str
+
+class DomainPackSummary(TypedDict):
+    id: DomainPackId
+    displayName: str
+    description: str
+    schemaVersion: Literal['1.0']
+    workflowId: WorkflowId
+    capabilityProfileId: DomainPackId
+    categories: list[DomainPackCategorySummary]
+    exampleQueries: list[str]
+
+class DomainPackRegistryResponse(TypedDict):
+    defaultPackId: DomainPackId
+    packs: list[DomainPackSummary]
+
+class DiscoveryWireRequest(TypedDict, total=False):
     query: str
+    domain_pack_id: DomainPackId
     requested_categories: list[WireProductCategory]
     use_cases: list[str]
     preferred_brands: list[str]
     primary_product_ids: list[str]
-    max_price: NotRequired[float | None]
+    max_price: float | None
     limit: int
     sponsored_allowed: bool
-    identity_id: NotRequired[str]
-    session_id: NotRequired[str]
+    identity_id: str
+    session_id: str
     personalization_enabled: bool
-    recent_product_ids: NotRequired[list[str]]
-    excluded_product_ids: NotRequired[list[str]]
-    ad_exposure_product_ids: NotRequired[list[str]]
+    recent_product_ids: list[str]
+    excluded_product_ids: list[str]
+    ad_exposure_product_ids: list[str]
 
-class CandidateWireRecord(TypedDict):
+class DataSourceMetadataWireRecord(TypedDict):
+    source: DataSourceKind
+    source_version: str
+    provider_id: str
+
+class _RetailOfferWireRecordOptional(TypedDict, total=False):
+    ad_bid: float
+    ad_quality: float
+
+class RetailOfferWireRecord(_RetailOfferWireRecordOptional):
+    offer_id: str
+    seller_id: str
+    price: float
+    currency: Literal['CNY']
+    stock: int
+    sponsored: bool
+    valid_until: str
+
+class _RetailSkuWireRecordOptional(TypedDict, total=False):
+    max_power_watts: int | None
+
+class RetailSkuWireRecord(_RetailSkuWireRecordOptional):
+    sku_id: str
+    title: str
+    ecosystem: Literal['ios', 'android', 'universal']
+    connectors: list[str]
+    protocols: list[str]
+    offers: list[RetailOfferWireRecord]
+
+class RetailSpuWireRecord(TypedDict):
+    spu_id: str
+    title: str
+    category: WireProductCategory
+    brand: str
+    tags: list[str]
+    skus: list[RetailSkuWireRecord]
+
+class RetailCatalogSnapshotWireRecord(TypedDict):
+    catalog_version: str
+    quote_version: str
+    generated_at: str
+    data_source: DataSourceMetadataWireRecord
+    spus: list[RetailSpuWireRecord]
+
+class _CandidateWireRecordOptional(TypedDict, total=False):
+    tags: list[str]
+    ecosystem: Literal['ios', 'android', 'universal']
+    connectors: list[str]
+    protocols: list[str]
+    max_power_watts: int | None
+    catalog_version: str
+    quote_version: str
+    quote_valid_until: str
+    ad_bid: float
+    ad_quality: float
+    sources: list[WireRetrievalChannel]
+    disclosure: str | None
+
+class CandidateWireRecord(_CandidateWireRecordOptional):
     spu_id: str
     product_id: str
     sku_id: str
@@ -102,13 +193,84 @@ class CandidateWireRecord(TypedDict):
     reasons: list[str]
     sponsored: bool
 
-class FusionWireRequest(TypedDict):
-    channels: list[dict[str, Any]]
+class DiscoveryWireResponse(TypedDict):
+    channel: WireRetrievalChannel
+    catalog_version: str
+    quote_version: str
+    data_source: DataSourceMetadataWireRecord
+    items: list[CandidateWireRecord]
+
+class ReviewAspectWireRecord(TypedDict):
+    aspect: str
+    sentiment: float
+    mention_count: int
+    confidence: float
+    summary: str
+
+class ReviewProductWireRecord(TypedDict):
+    product_id: str
+    sample_size: int
+    aspects: list[ReviewAspectWireRecord]
+    source: DataSourceKind
+    source_version: str
+    provider_id: str
+
+class _ReviewEvidenceWireRequestOptional(TypedDict, total=False):
+    domain_pack_id: DomainPackId
+
+class ReviewEvidenceWireRequest(_ReviewEvidenceWireRequestOptional):
+    product_ids: list[str]
+
+class ReviewEvidenceWireResponse(TypedDict):
+    review_snapshot_version: str
+    data_source: DataSourceMetadataWireRecord
+    products: list[ReviewProductWireRecord]
+    missing_product_ids: list[str]
+
+class _PricingQuoteWireRequestOptional(TypedDict, total=False):
+    domain_pack_id: DomainPackId
+
+class PricingQuoteWireRequest(_PricingQuoteWireRequestOptional):
+    offer_ids: list[str]
+
+class PriceQuoteWireRecord(TypedDict):
+    offer_id: str
+    status: Literal['active', 'unavailable']
+    amount: float | None
+    currency: Literal['CNY']
+    stock: int
+    valid_until: str
+    reason: str
+
+class PricingQuoteWireResponse(TypedDict):
+    quote_batch_id: str
+    quote_version: str
+    issued_at: str
+    data_source: DataSourceMetadataWireRecord
+    quotes: list[PriceQuoteWireRecord]
+
+class _FusionChannelWireRecordOptional(TypedDict, total=False):
+    catalog_version: str
+    quote_version: str
+    data_source: DataSourceMetadataWireRecord
+
+class FusionChannelWireRecord(_FusionChannelWireRecordOptional):
+    channel: WireRetrievalChannel
+    items: list[CandidateWireRecord]
+
+class _FusionWireRequestOptional(TypedDict, total=False):
+    domain_pack_id: DomainPackId
     limit: int
 
-class BundleOptimizationWireRequest(TypedDict):
+class FusionWireRequest(_FusionWireRequestOptional):
+    channels: list[FusionChannelWireRecord]
+
+class _BundleOptimizationWireRequestOptional(TypedDict, total=False):
+    domain_pack_id: DomainPackId
+    budget_max: float | None
+    top_n: int
+
+class BundleOptimizationWireRequest(_BundleOptimizationWireRequestOptional):
     items: list[CandidateWireRecord]
     requested_categories: list[WireProductCategory]
     intent: Literal['precise', 'catalog', 'exploratory', 'bundle', 'compare']
-    budget_max: NotRequired[float | None]
-    top_n: int

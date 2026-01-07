@@ -1,6 +1,23 @@
 {
   "schema_version": "1.0",
   "pack_id": "normal-3c-v1",
+  "display_name": "常规 3C 购买决策",
+  "description": "手机、耳机与充电配件的搜广推决策基线包。",
+  "workflow_id": "commerce-decision-v1",
+  "capability_profile_id": "commerce-bounded-v1",
+  "assets": {
+    "catalog": "normal_3c_catalog_v1.json",
+    "reviews": "normal_3c_review_aspects_v1.json",
+    "compatibility": "normal_3c_compatibility_graph_v1.json"
+  },
+  "category_requirements": {
+    "charger": {"connectors_any": ["usb-c"], "protocols_any": ["usb-pd", "pps"]},
+    "cable": {"connectors_any": ["usb-c"], "protocols_any": ["usb-pd", "pps"]}
+  },
+  "example_queries": [
+    "预算 7000 元，帮我搭配一套手机、耳机和充电器",
+    "不要广告，比较几款重视拍照和续航的手机"
+  ],
   "default_category": "phone",
   "primary_category": "phone",
   "default_bundle_categories": ["phone", "headphones", "charger"],

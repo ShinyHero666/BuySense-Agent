@@ -37,6 +37,7 @@ export class CartDraftAgent {
     sessionId: string,
     decision: SearchAdsRecsReply,
     onTrace?: (record: AgentTraceRecord) => void,
+    signal?: AbortSignal,
   ): Promise<CartDraftOutcome> {
     const runId = `cart-run-${randomUUID()}`;
     const artifacts = new InMemoryArtifactStore();
@@ -44,7 +45,17 @@ export class CartDraftAgent {
     trace.add("cart", "run_started", { sessionIdChars: sessionId.length });
 
     trace.add("cart", "tool_delegated", { to: "pricing", reason: "confirmation_refresh" });
-    const quotes = await this.#evidence.quote(decision.bundle.items);
+    const quotes = await this.#evidence.quote(decision.bundle.items, signal);
+    trace.add("pricing", "data_plane_result", {
+      resource: "pricing",
+      purpose: "confirmation_refresh",
+      quoteBatchId: quotes.quoteBatchId,
+      quoteVersion: quotes.quoteVersion,
+      quoteCount: quotes.quotes.length,
+      source: quotes.dataSource.source,
+      sourceVersion: quotes.dataSource.sourceVersion,
+      providerId: quotes.dataSource.providerId,
+    });
     const priceArtifact = artifacts.publish({
       runId,
       parentTaskId: decision.runId,

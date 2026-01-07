@@ -3,6 +3,7 @@ import test from "node:test";
 import { SearchAdsRecsBuyerAgent } from "../src/buyer-agent.js";
 import type { CandidateEnvelope } from "../src/contracts.js";
 import { InMemoryDecisionEvidenceGateway } from "../src/evidence.js";
+import { loadCatalogForDomainPack, NORMAL_3C_DOMAIN } from "../src/domain-pack.js";
 
 const FIXED_NOW = Date.parse("2026-08-01T10:00:00Z");
 
@@ -126,7 +127,7 @@ class QuoteExpiresOnConfirmation extends InMemoryDecisionEvidenceGateway {
 }
 
 test("quote loss between proposal and confirmation rejects the cart draft", async () => {
-  const evidence = new QuoteExpiresOnConfirmation();
+  const evidence = new QuoteExpiresOnConfirmation(loadCatalogForDomainPack(NORMAL_3C_DOMAIN));
   const agent = new SearchAdsRecsBuyerAgent({ evidence, now: () => FIXED_NOW });
   const proposal = await agent.handle({
     sessionId: "quote-loss",

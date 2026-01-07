@@ -12,12 +12,15 @@ export type AgentRole =
 
 export type RetrievalChannel = "search" | "recommendation" | "ads";
 
-export type ProductCategory =
-  | "phone"
-  | "headphones"
-  | "charger"
-  | "cable"
-  | "case";
+/** Domain Packs own the closed category set; the stable core only transports ids. */
+export type ProductCategory = string;
+
+/** Sanitized provenance carried across the Python HTTP data-plane boundary. */
+export interface DataSourceMetadata {
+  source: DataSourceKind;
+  sourceVersion: string;
+  providerId: string;
+}
 
 export interface RequirementState {
   budgetMax: number | null;
@@ -62,6 +65,7 @@ export interface CatalogProduct {
   currency: "CNY";
   quoteVersion: string;
   quoteValidUntil: string;
+  dataSource: DataSourceMetadata;
 }
 
 export interface CandidateEnvelope {
@@ -122,6 +126,7 @@ export interface PriceQuoteBatch {
   quoteBatchId: string;
   quoteVersion: string;
   issuedAt: string;
+  dataSource: DataSourceMetadata;
   quotes: PriceQuote[];
 }
 
@@ -137,11 +142,14 @@ export interface ProductReviewEvidence {
   productId: string;
   sampleSize: number;
   aspects: ReviewAspectEvidence[];
-  source: "synthetic_review_snapshot";
+  source: DataSourceKind;
+  sourceVersion: string;
+  providerId: string;
 }
 
 export interface ReviewEvidenceBatch {
   reviewSnapshotVersion: string;
+  dataSource: DataSourceMetadata;
   products: ProductReviewEvidence[];
   missingProductIds: string[];
 }
@@ -163,6 +171,8 @@ export interface RevisionRequest {
 }
 
 export interface DiscoveryContext {
+  /** Stable outer Run identifier used to namespace audit tasks and artifacts. */
+  executionRunId?: string;
   peerCandidates?: CandidateEnvelope[];
   revision?: RevisionRequest;
   identityId?: string;
@@ -219,6 +229,8 @@ export interface AgentRuntimeSummary {
 
 export interface SearchAdsRecsReply {
   runId: string;
+  domainPackId: string;
+  workflowId: string;
   message: string;
   plan: RetrievalPlan;
   slate: CandidateEnvelope[];
@@ -233,6 +245,8 @@ export interface SearchAdsRecsReply {
 
 export interface ChannelResult {
   channel: RetrievalChannel;
+  /** Batch-level catalog provenance, retained even when retrieval returns no items. */
+  dataSource?: DataSourceMetadata;
   candidates: CandidateEnvelope[];
 }
 
@@ -243,10 +257,15 @@ export interface DiscoveryChannels {
 }
 
 export interface DecisionOptimizationGateway {
-  fuse(results: ChannelResult[], limit?: number): Promise<CandidateEnvelope[]>;
+  fuse(
+    results: ChannelResult[],
+    limit?: number,
+    signal?: AbortSignal,
+  ): Promise<CandidateEnvelope[]>;
   optimizeBundle(
     slate: CandidateEnvelope[],
     plan: RetrievalPlan,
+    signal?: AbortSignal,
   ): Promise<BundleProposal>;
 }
 
@@ -254,9 +273,10 @@ export interface DecisionEvidenceGateway {
   checkCompatibility(
     primary: CandidateEnvelope,
     accessories: CandidateEnvelope[],
+    signal?: AbortSignal,
   ): Promise<CompatibilityResult[]>;
-  quote(items: CandidateEnvelope[]): Promise<PriceQuoteBatch>;
-  reviewAspects(productIds: string[]): Promise<ReviewEvidenceBatch>;
+  quote(items: CandidateEnvelope[], signal?: AbortSignal): Promise<PriceQuoteBatch>;
+  reviewAspects(productIds: string[], signal?: AbortSignal): Promise<ReviewEvidenceBatch>;
 }
 
 export interface CartDraftItem {
@@ -298,6 +318,8 @@ export interface BuyerTurnRequest {
   userId: string;
   message: string;
   confirmed?: boolean;
+  /** Bind a confirmation to the proposal Run that produced the pending decision. */
+  proposalRunId?: string;
 }
 
 export interface BuyerTurnReply {
@@ -308,3 +330,4 @@ export interface BuyerTurnReply {
   confirmationTrace: AgentTraceRecord[];
 }
 import type { RequirementConstraint } from "./generated/contracts-v2.js";
+import type { DataSourceKind } from "./generated/contracts-v2.js";

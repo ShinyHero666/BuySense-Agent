@@ -3,13 +3,29 @@ import test from "node:test";
 import { InMemoryDiscoveryChannels } from "../src/channels.js";
 import type {
   AgentRole,
+  CandidateEnvelope,
   ChannelResult,
   DiscoveryChannels,
   DiscoveryContext,
+  PriceQuoteBatch,
   RetrievalPlan,
 } from "../src/contracts.js";
 import { InMemoryDecisionEvidenceGateway } from "../src/evidence.js";
 import { SearchAdsRecsLeadAgent } from "../src/orchestrator.js";
+import { DOMAIN_PACK_REGISTRY } from "../src/domain-pack.js";
+
+test("domain-aware LeadAgent defaults load the selected pack catalog and evidence", async () => {
+  const domain = DOMAIN_PACK_REGISTRY.get("outdoor-camping-v1");
+  const reply = await new SearchAdsRecsLeadAgent({ domain }).handle(
+    "预算900元，帮我搭配一套防风炉具、气罐和锅具，不要广告",
+  );
+  assert.equal(reply.domainPackId, domain.packId);
+  assert.equal(reply.critique.verdict, "approved");
+  assert.deepEqual(
+    reply.bundle.items.map((item) => item.product.category).sort(),
+    ["camp_stove", "cookware", "fuel_canister"],
+  );
+});
 
 test("runs Pi-backed search, recommendation, ads and critic agents", async () => {
   const reply = await new SearchAdsRecsLeadAgent().handle(
@@ -25,6 +41,30 @@ test("runs Pi-backed search, recommendation, ads and critic agents", async () =>
   assert.ok(reply.bundle.compatibility.every((result) => result.paths.length > 0));
   assert.ok(reply.priceQuote.quotes.every((quote) => quote.status === "active"));
   assert.equal(reply.reviewEvidence.products.length, 3);
+  assert.ok(reply.slate.every((candidate) => candidate.product.dataSource.source === "local_snapshot"));
+  assert.equal(reply.priceQuote.dataSource.source, "local_snapshot");
+  assert.equal(reply.priceQuote.dataSource.sourceVersion, reply.priceQuote.quoteVersion);
+  assert.equal(reply.reviewEvidence.dataSource.source, "local_snapshot");
+  assert.equal(
+    reply.reviewEvidence.dataSource.sourceVersion,
+    reply.reviewEvidence.reviewSnapshotVersion,
+  );
+  assert.ok(reply.reviewEvidence.products.every((product) =>
+    product.source === "local_snapshot" && product.sourceVersion.length > 0 && product.providerId.length > 0
+  ));
+
+  for (const resource of ["catalog", "pricing", "reviews"]) {
+    assert.ok(
+      reply.trace.some((record) =>
+        record.event === "data_plane_result" &&
+        record.detail.resource === resource &&
+        record.detail.source === "local_snapshot" &&
+        typeof record.detail.sourceVersion === "string" &&
+        typeof record.detail.providerId === "string"
+      ),
+      `missing sanitized ${resource} provenance trace`,
+    );
+  }
 
   const roles = new Set(reply.trace.map((record) => record.role));
   const expectedRoles: AgentRole[] = [
@@ -216,4 +256,39 @@ test("critic fails closed when a live offer quote becomes unavailable", async ()
   assert.equal(reply.critique.verdict, "vetoed");
   assert.ok(reply.critique.violations.includes("live_quote_coverage"));
   assert.ok(reply.critique.violations.includes("all_items_in_stock"));
+});
+
+test("proposal evidence calls receive cancellation and stop promptly", async () => {
+  let quoteStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    quoteStarted = resolve;
+  });
+  class BlockingQuoteGateway extends InMemoryDecisionEvidenceGateway {
+    override async quote(
+      _items: CandidateEnvelope[],
+      signal?: AbortSignal,
+    ): Promise<PriceQuoteBatch> {
+      assert.ok(signal, "proposal quote must receive the Run signal");
+      quoteStarted();
+      return new Promise<PriceQuoteBatch>((_resolve, reject) => {
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }
+  }
+
+  const controller = new AbortController();
+  const execution = new SearchAdsRecsLeadAgent({
+    evidence: new BlockingQuoteGateway(),
+  }).handle(
+    "总预算7000元，帮我选一台手机并搭配耳机和充电器",
+    undefined,
+    { signal: controller.signal },
+  );
+  await started;
+  controller.abort(new Error("test proposal cancellation"));
+  await assert.rejects(execution, /test proposal cancellation/);
 });

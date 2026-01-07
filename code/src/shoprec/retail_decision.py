@@ -1,17 +1,34 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import itertools
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from .generated_contracts_v2 import (
+    BundleOptimizationWireRequest,
+    FusionWireRequest,
+    PricingQuoteWireRequest,
+    PricingQuoteWireResponse,
+    ReviewEvidenceWireRequest,
+    ReviewEvidenceWireResponse,
+)
+from .retail_data_ports import (
+    PricingDataPort,
+    ReviewDataPort,
+    StaticPricingDataPort,
+    StaticReviewDataPort,
+)
 from .retail_models import RetailCatalogItem, RetailCatalogSnapshot, load_retail_catalog
-from .retail_domain import DEFAULT_BUNDLE_CATEGORIES, PRIMARY_CATEGORY, PRODUCT_CATEGORIES
+from .retail_domain import NORMAL_3C_DOMAIN_PACK_MODEL, RetailDomainPack
 from .validation import ValidationError, reject_unknown_fields, require_mapping
+
+# Backward-compatible names now share the single validated data-port implementation.
+ReviewAspectRepository = StaticReviewDataPort
+PricingQuoteService = StaticPricingDataPort
 
 
 @dataclass(frozen=True)
@@ -21,10 +38,6 @@ class CompatibilityRule:
     accessory_category: str
     required_shared_connectors: tuple[str, ...]
     required_shared_protocols: tuple[str, ...]
-
-
-def _data_path(filename: str) -> Path:
-    return Path(__file__).resolve().parent / "data" / filename
 
 
 def _string(value: Any, field: str) -> str:
@@ -43,88 +56,19 @@ def _string_list(value: Any, field: str) -> list[str]:
     return [item.strip() for item in value]
 
 
-class ReviewAspectRepository:
-    def __init__(self, path: str | Path | None = None) -> None:
-        raw = json.loads(
-            (Path(path) if path else _data_path("normal_3c_review_aspects_v1.json"))
-            .read_text(encoding="utf-8")
-        )
-        self.version = _string(raw.get("review_snapshot_version"), "review_snapshot_version")
-        products = raw.get("products")
-        if not isinstance(products, list):
-            raise ValueError("review products must be an array")
-        self.products: dict[str, dict[str, Any]] = {}
-        for index, product in enumerate(products):
-            if not isinstance(product, dict) or not isinstance(product.get("aspects"), list):
-                raise ValueError(f"review products[{index}] must contain an aspects array")
-            product_id = _string(product.get("product_id"), f"products[{index}].product_id")
-            if product_id in self.products:
-                raise ValueError(f"duplicate review product_id: {product_id}")
-            sample_size = product.get("sample_size")
-            if isinstance(sample_size, bool) or not isinstance(sample_size, int) or sample_size < 0:
-                raise ValueError(f"{product_id}.sample_size must be a non-negative integer")
-            aspects: list[dict[str, Any]] = []
-            for aspect_index, aspect in enumerate(product["aspects"]):
-                field = f"{product_id}.aspects[{aspect_index}]"
-                if not isinstance(aspect, dict):
-                    raise ValueError(f"{field} must be an object")
-                sentiment = aspect.get("sentiment")
-                confidence = aspect.get("confidence")
-                mentions = aspect.get("mention_count")
-                if (
-                    isinstance(sentiment, bool)
-                    or not isinstance(sentiment, (int, float))
-                    or not math.isfinite(sentiment)
-                    or not -1 <= sentiment <= 1
-                ):
-                    raise ValueError(f"{field}.sentiment must be between -1 and 1")
-                if (
-                    isinstance(confidence, bool)
-                    or not isinstance(confidence, (int, float))
-                    or not math.isfinite(confidence)
-                    or not 0 <= confidence <= 1
-                ):
-                    raise ValueError(f"{field}.confidence must be between 0 and 1")
-                if isinstance(mentions, bool) or not isinstance(mentions, int) or mentions < 0:
-                    raise ValueError(f"{field}.mention_count must be non-negative")
-                aspects.append(
-                    {
-                        "aspect": _string(aspect.get("aspect"), f"{field}.aspect"),
-                        "sentiment": float(sentiment),
-                        "mention_count": mentions,
-                        "confidence": float(confidence),
-                        "summary": _string(aspect.get("summary"), f"{field}.summary"),
-                    }
-                )
-            self.products[product_id] = {
-                "product_id": product_id,
-                "sample_size": sample_size,
-                "aspects": aspects,
-                "source": "synthetic_review_snapshot",
-            }
-
-    def get(self, payload: dict[str, Any]) -> dict[str, Any]:
-        payload = require_mapping(payload)
-        reject_unknown_fields(payload, {"product_ids"})
-        product_ids = _string_list(payload.get("product_ids"), "product_ids")
-        found = [self.products[product_id] for product_id in product_ids if product_id in self.products]
-        missing = [product_id for product_id in product_ids if product_id not in self.products]
-        return {
-            "review_snapshot_version": self.version,
-            "products": found,
-            "missing_product_ids": missing,
-        }
-
-
 class CompatibilityGraphService:
     def __init__(
         self,
         catalog: RetailCatalogSnapshot,
         path: str | Path | None = None,
+        *,
+        pack: RetailDomainPack | None = None,
     ) -> None:
+        runtime_pack = pack or NORMAL_3C_DOMAIN_PACK_MODEL
         raw = json.loads(
-            (Path(path) if path else _data_path("normal_3c_compatibility_graph_v1.json"))
-            .read_text(encoding="utf-8")
+            (Path(path) if path else runtime_pack.asset_path("compatibility")).read_text(
+                encoding="utf-8"
+            )
         )
         self.version = _string(raw.get("graph_version"), "graph_version")
         raw_rules = raw.get("rules")
@@ -245,103 +189,100 @@ class CompatibilityGraphService:
         return {"graph_version": self.version, "results": results}
 
 
-class PricingQuoteService:
-    def __init__(
-        self,
-        catalog: RetailCatalogSnapshot,
-        now: Callable[[], datetime] | None = None,
-    ) -> None:
-        self.catalog = catalog
-        self.now = now or (lambda: datetime.now(timezone.utc))
-        self.items_by_offer = {item.offer.offer_id: item for item in catalog.sellable_items()}
-
-    def quote(self, payload: dict[str, Any]) -> dict[str, Any]:
-        payload = require_mapping(payload)
-        reject_unknown_fields(payload, {"offer_ids"})
-        offer_ids = _string_list(payload.get("offer_ids"), "offer_ids")
-        issued_at = self.now().astimezone(timezone.utc)
-        ttl_end = issued_at + timedelta(minutes=5)
-        quotes: list[dict[str, Any]] = []
-        for offer_id in offer_ids:
-            item = self.items_by_offer.get(offer_id)
-            if item is None:
-                quotes.append(
-                    {
-                        "offer_id": offer_id,
-                        "status": "unavailable",
-                        "amount": None,
-                        "currency": "CNY",
-                        "stock": 0,
-                        "valid_until": issued_at.isoformat(),
-                        "reason": "offer_not_found",
-                    }
-                )
-                continue
-            catalog_expiry = datetime.fromisoformat(
-                item.offer.valid_until.replace("Z", "+00:00")
-            )
-            valid_until = min(ttl_end, catalog_expiry)
-            active = item.offer.stock > 0 and valid_until > issued_at
-            quotes.append(
-                {
-                    "offer_id": offer_id,
-                    "status": "active" if active else "unavailable",
-                    "amount": item.offer.price if active else None,
-                    "currency": item.offer.currency,
-                    "stock": item.offer.stock if active else 0,
-                    "valid_until": valid_until.isoformat(),
-                    "reason": "live_offer_snapshot" if active else "out_of_stock_or_expired",
-                }
-            )
-        digest = hashlib.sha256(
-            ("|".join(offer_ids) + issued_at.isoformat()).encode("utf-8")
-        ).hexdigest()[:16]
-        return {
-            "quote_batch_id": f"quote-batch-{digest}",
-            "quote_version": f"realtime-{self.catalog.quote_version}",
-            "issued_at": issued_at.isoformat(),
-            "quotes": quotes,
-        }
-
-
 class RetailDecisionService:
     def __init__(
         self,
         catalog: RetailCatalogSnapshot | None = None,
         *,
+        pack: RetailDomainPack | None = None,
         now: Callable[[], datetime] | None = None,
+        reviews: ReviewDataPort | None = None,
+        pricing: PricingDataPort | None = None,
     ) -> None:
-        runtime_catalog = catalog or load_retail_catalog()
+        self.pack = pack or NORMAL_3C_DOMAIN_PACK_MODEL
+        runtime_catalog = catalog or load_retail_catalog(pack=self.pack)
         self.catalog = runtime_catalog
-        self.reviews = ReviewAspectRepository()
-        self.compatibility = CompatibilityGraphService(runtime_catalog)
-        self.pricing = PricingQuoteService(runtime_catalog, now=now)
+        self.reviews = reviews or StaticReviewDataPort(pack=self.pack)
+        self.compatibility = CompatibilityGraphService(runtime_catalog, pack=self.pack)
+        self.pricing = pricing or StaticPricingDataPort(
+            runtime_catalog, pack=self.pack, now=now
+        )
 
-    def review_aspects(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def review_aspects(
+        self, payload: ReviewEvidenceWireRequest
+    ) -> ReviewEvidenceWireResponse:
         return self.reviews.get(payload)
 
     def check_compatibility(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.compatibility.check(payload)
 
-    def quote(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def quote(self, payload: PricingQuoteWireRequest) -> PricingQuoteWireResponse:
         return self.pricing.quote(payload)
 
-    @staticmethod
-    def _candidate_list(payload: dict[str, Any], field: str = "items") -> list[dict[str, Any]]:
+    def _candidate(
+        self, item: Any, field: str
+    ) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            raise ValidationError(field, "must be an object")
+        required_strings = (
+            "spu_id",
+            "product_id",
+            "sku_id",
+            "offer_id",
+            "title",
+            "category",
+            "brand",
+        )
+        for name in required_strings:
+            if not isinstance(item.get(name), str):
+                raise ValidationError(f"{field}.{name}", "must be a string")
+        if item["category"] not in self.pack.product_categories:
+            raise ValidationError(f"{field}.category", "is outside the selected domain pack")
+        for name in ("price", "channel_score", "normalized_score"):
+            value = item.get(name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                raise ValidationError(f"{field}.{name}", "must be a finite number")
+        stock = item.get("stock")
+        if isinstance(stock, bool) or not isinstance(stock, int):
+            raise ValidationError(f"{field}.stock", "must be an integer")
+        if item.get("currency") != "CNY":
+            raise ValidationError(f"{field}.currency", "must equal CNY")
+        if item.get("channel") not in {"search", "recommendation", "ads"}:
+            raise ValidationError(f"{field}.channel", "is unsupported")
+        if not isinstance(item.get("reasons"), list) or not all(
+            isinstance(reason, str) for reason in item["reasons"]
+        ):
+            raise ValidationError(f"{field}.reasons", "must be an array of strings")
+        if not isinstance(item.get("sponsored"), bool):
+            raise ValidationError(f"{field}.sponsored", "must be a boolean")
+        for optional_number in ("ad_quality", "ad_bid"):
+            value = item.get(optional_number)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                raise ValidationError(
+                    f"{field}.{optional_number}", "must be a finite number"
+                )
+        return dict(item)
+
+    def _candidate_list(
+        self, payload: dict[str, Any], field: str = "items"
+    ) -> list[dict[str, Any]]:
         value = payload.get(field)
         if not isinstance(value, list) or len(value) > 200:
             raise ValidationError(field, "must be an array with at most 200 values")
-        candidates: list[dict[str, Any]] = []
-        for index, item in enumerate(value):
-            if not isinstance(item, dict):
-                raise ValidationError(f"{field}[{index}]", "must be an object")
-            for required in ("sku_id", "product_id", "category", "price", "channel_score"):
-                if required not in item:
-                    raise ValidationError(f"{field}[{index}].{required}", "is required")
-            candidates.append(dict(item))
-        return candidates
+        return [
+            self._candidate(item, f"{field}[{index}]")
+            for index, item in enumerate(value)
+        ]
 
-    def fuse(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def fuse(self, payload: FusionWireRequest) -> dict[str, Any]:
         """Weighted reciprocal-rank fusion with organic-quality ad protection."""
         payload = require_mapping(payload)
         reject_unknown_fields(payload, {"channels", "limit"})
@@ -359,6 +300,20 @@ class RetailDecisionService:
         for channel_index, channel_result in enumerate(channels):
             if not isinstance(channel_result, dict):
                 raise ValidationError(f"channels[{channel_index}]", "must be an object")
+            reject_unknown_fields(
+                channel_result,
+                {"channel", "items", "catalog_version", "quote_version", "data_source"},
+                field=f"channels[{channel_index}]",
+            )
+            for version_field in ("catalog_version", "quote_version"):
+                version = channel_result.get(version_field)
+                if version is not None and (
+                    not isinstance(version, str) or len(version) == 0
+                ):
+                    raise ValidationError(
+                        f"channels[{channel_index}].{version_field}",
+                        "must be a non-empty string",
+                    )
             channel = channel_result.get("channel")
             if channel not in weights:
                 raise ValidationError(f"channels[{channel_index}].channel", "is unsupported")
@@ -366,9 +321,10 @@ class RetailDecisionService:
             if not isinstance(items, list) or len(items) > 100:
                 raise ValidationError(f"channels[{channel_index}].items", "must be an array")
             for rank, original in enumerate(items, start=1):
-                if not isinstance(original, dict):
-                    raise ValidationError("items", "candidate must be an object")
-                candidate = dict(original)
+                candidate = self._candidate(
+                    original,
+                    f"channels[{channel_index}].items[{rank - 1}]",
+                )
                 sku_id = _string(candidate.get("sku_id"), "sku_id")
                 rrf = weights[channel] / (60 + rank)
                 if channel == "ads":
@@ -434,7 +390,9 @@ class RetailDecisionService:
             "sponsored_count": sum(bool(item.get("sponsored")) for item in slate[:limit]),
         }
 
-    def optimize_bundles(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def optimize_bundles(
+        self, payload: BundleOptimizationWireRequest
+    ) -> dict[str, Any]:
         """Enumerate bounded category combinations and return globally scored Top-N bundles."""
         payload = require_mapping(payload)
         reject_unknown_fields(
@@ -443,7 +401,31 @@ class RetailDecisionService:
         )
         items = self._candidate_list(payload)
         requested = _string_list(payload.get("requested_categories"), "requested_categories")
-        intent = _string(payload.get("intent"), "intent")
+        if any(
+            category != category.strip()
+            for category in payload.get("requested_categories", [])
+        ):
+            raise ValidationError(
+                "requested_categories", "values must not contain surrounding whitespace"
+            )
+        if not requested:
+            raise ValidationError(
+                "requested_categories", "must contain at least one category"
+            )
+        unknown_categories = sorted(set(requested) - self.pack.product_categories)
+        if unknown_categories:
+            raise ValidationError(
+                "requested_categories",
+                "contains categories outside the selected domain pack: "
+                + ", ".join(unknown_categories),
+            )
+        intent = payload.get("intent")
+        if not isinstance(intent, str) or not intent or intent != intent.strip():
+            raise ValidationError(
+                "intent", "must be a non-empty value without surrounding whitespace"
+            )
+        if intent not in {"precise", "catalog", "exploratory", "bundle", "compare"}:
+            raise ValidationError("intent", "is unsupported")
         top_n = payload.get("top_n", 3)
         if isinstance(top_n, bool) or not isinstance(top_n, int) or not 1 <= top_n <= 10:
             raise ValidationError("top_n", "must be an integer between 1 and 10")
@@ -456,11 +438,16 @@ class RetailDecisionService:
         ):
             raise ValidationError("budget_max", "must be a non-negative number or null")
         budget = float(budget_raw) if budget_raw is not None else None
-        primary_category = PRIMARY_CATEGORY if PRIMARY_CATEGORY in requested else requested[0]
+        primary_category = (
+            self.pack.primary_category
+            if self.pack.primary_category in requested
+            else requested[0]
+        )
         required_categories = (
             [
                 category for category in requested
-                if category in PRODUCT_CATEGORIES and category in DEFAULT_BUNDLE_CATEGORIES
+                if category in self.pack.product_categories
+                and category in self.pack.default_bundle_categories
             ]
             if intent == "bundle"
             else [primary_category]
@@ -553,5 +540,11 @@ class RetailDecisionService:
 
 def create_retail_decision_service(
     catalog: RetailCatalogSnapshot | None = None,
+    *,
+    pack: RetailDomainPack | None = None,
+    reviews: ReviewDataPort | None = None,
+    pricing: PricingDataPort | None = None,
 ) -> RetailDecisionService:
-    return RetailDecisionService(catalog)
+    return RetailDecisionService(
+        catalog, pack=pack, reviews=reviews, pricing=pricing
+    )

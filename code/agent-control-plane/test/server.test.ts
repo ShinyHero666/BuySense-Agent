@@ -1,8 +1,30 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { SearchAdsRecsBuyerAgent } from "../src/buyer-agent.js";
+import {
+  ReplayPiRuntimeFactory,
+  type PiRuntimeProbe,
+} from "../src/pi-runtime.js";
 import { buildControlPlaneServer } from "../src/server.js";
+import { CommerceRepository } from "../src/v2-repository.js";
+
+class UnavailableOptionalModelRuntime extends ReplayPiRuntimeFactory {
+  override async probe(): Promise<PiRuntimeProbe> {
+    throw new Error("simulated model dependency outage");
+  }
+}
+
+class SlowOptionalModelRuntime extends ReplayPiRuntimeFactory {
+  probeCalls = 0;
+
+  override async probe(): Promise<PiRuntimeProbe> {
+    this.probeCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    return { ...this.describe(), status: "down", latencyMs: 1_500, error: "slow" };
+  }
+}
 
 async function post(baseUrl: string, payload: unknown): Promise<Response> {
   return fetch(`${baseUrl}/api/v1/agent`, {
@@ -10,6 +32,66 @@ async function post(baseUrl: string, payload: unknown): Promise<Response> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+function retailSourceHealth(
+  configuredMode: "static" | "http" | "mixed",
+  effectiveSource: "local_snapshot" | "remote_provider" | "unavailable" | "mixed",
+  status: "up" | "degraded" | "down",
+  fallbackActive: boolean,
+  providerId: string | null,
+  effectiveProviderId: string | null,
+) {
+  return {
+    configuredMode,
+    effectiveSource,
+    status,
+    fallbackActive,
+    version: status === "down" ? null : "snapshot-v1",
+    providerId,
+    effectiveProviderId,
+    ...(status === "up" ? {} : { lastErrorCode: "provider_timeout" }),
+    telemetry: {
+      requests: status === "up" ? 1 : 2,
+      errors: status === "up" ? 0 : 1,
+      fallbacks: fallbackActive ? 1 : 0,
+    },
+  };
+}
+
+function pythonRetailHealthPayload() {
+  return {
+    status: "UP",
+    ready: true,
+    upstreamUrl: "https://user:secret@provider.invalid/private",
+    apiToken: "must-not-cross-the-control-plane",
+    retailSources: {
+      catalog: retailSourceHealth(
+        "http",
+        "local_snapshot",
+        "degraded",
+        true,
+        "retail-a1b2c3",
+        "normal-3c-v1",
+      ),
+      reviews: retailSourceHealth(
+        "http",
+        "remote_provider",
+        "up",
+        false,
+        "retail-a1b2c3",
+        "retail-a1b2c3",
+      ),
+      pricing: retailSourceHealth(
+        "mixed",
+        "mixed",
+        "up",
+        false,
+        null,
+        null,
+      ),
+    },
+  };
 }
 
 test("HTTP service exposes proposal, confirmation, cart draft and six-layer metrics", async () => {
@@ -27,9 +109,17 @@ test("HTTP service exposes proposal, confirmation, cart draft and six-layer metr
 
     const health = await fetch(`${baseUrl}/health`).then((response) => response.json());
     assert.equal(health.status, "UP");
+    assert.equal(health.ready, true);
     assert.equal(health.paymentEnabled, false);
     assert.equal(health.model.mode, "replay");
     assert.equal(health.dataPlane.status, "embedded");
+    assert.equal(health.dataPlane.retailSources.catalog.effectiveSource, "local_snapshot");
+    assert.equal(health.dataPlane.retailSources.catalog.effectiveProviderId, "embedded");
+    assert.deepEqual(health.dataPlane.retailSources.catalog.telemetry, {
+      requests: 0,
+      errors: 0,
+      fallbacks: 0,
+    });
 
     const runtime = await fetch(`${baseUrl}/api/v1/runtime`).then(
       (response) => response.json(),
@@ -54,6 +144,13 @@ test("HTTP service exposes proposal, confirmation, cart draft and six-layer metr
     }).then((response) => response.json());
     assert.equal(confirmation.phase, "cart_draft");
     assert.equal(confirmation.cartDraft.paymentAuthorized, false);
+    assert.ok(confirmation.confirmationTrace.some(
+      (record: { event: string; detail: Record<string, unknown> }) =>
+        record.event === "data_plane_result" &&
+        record.detail.resource === "pricing" &&
+        record.detail.purpose === "confirmation_refresh" &&
+        record.detail.source === "local_snapshot",
+    ));
 
     const draft = await fetch(
       `${baseUrl}/api/v1/cart-drafts/${confirmation.cartDraft.draftId}`,
@@ -73,6 +170,202 @@ test("HTTP service exposes proposal, confirmation, cart draft and six-layer metr
     await new Promise<void>((resolve, reject) =>
       server.close((error) => error ? reject(error) : resolve()),
     );
+  }
+});
+
+test("readiness stays up when the optional model dependency uses deterministic fallback", async () => {
+  const agent = new SearchAdsRecsBuyerAgent({
+    runtime: new UnavailableOptionalModelRuntime(),
+  });
+  const server = buildControlPlaneServer({ agent });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const summaryResponse = await fetch(`${baseUrl}/health`);
+    assert.equal(summaryResponse.status, 200);
+    const summary = await summaryResponse.json();
+    assert.equal(summary.status, "DEGRADED");
+    assert.equal(summary.ready, true);
+    assert.equal(summary.dependencies.model.required, false);
+    assert.equal(summary.dependencies.model.fallbackActive, true);
+    assert.equal((await fetch(`${baseUrl}/health/ready`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/health/dependencies`)).status, 200);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("readiness never waits for a slow optional model probe", async () => {
+  const runtime = new SlowOptionalModelRuntime();
+  const agent = new SearchAdsRecsBuyerAgent({ runtime });
+  const server = buildControlPlaneServer({ agent });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const response = await fetch(`${baseUrl}/health/ready`);
+    assert.equal(response.status, 200);
+    assert.equal(runtime.probeCalls, 0);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("readiness fails when the required Python data plane is unavailable", async () => {
+  const server = buildControlPlaneServer({
+    discoveryMode: "python",
+    discoveryBaseUrl: "http://127.0.0.1:1",
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    assert.equal((await fetch(`${baseUrl}/health/live`)).status, 200);
+    const summaryResponse = await fetch(`${baseUrl}/health`);
+    assert.equal(summaryResponse.status, 200);
+    const summary = await summaryResponse.json();
+    assert.equal(summary.status, "DOWN");
+    assert.equal(summary.ready, false);
+    assert.equal(summary.dependencies.dataPlane.required, true);
+    assert.equal((await fetch(`${baseUrl}/health/ready`)).status, 503);
+    assert.equal((await fetch(`${baseUrl}/health/dependencies`)).status, 503);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("readiness whitelists Python retail source health and reports Python-managed fallback", async () => {
+  const python = createServer((_request, response) => {
+    const body = Buffer.from(JSON.stringify(pythonRetailHealthPayload()));
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": body.length,
+    });
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => python.listen(0, "127.0.0.1", resolve));
+  const pythonBaseUrl = `http://127.0.0.1:${(python.address() as AddressInfo).port}`;
+  const server = buildControlPlaneServer({
+    discoveryMode: "python",
+    discoveryBaseUrl: pythonBaseUrl,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const response = await fetch(`${baseUrl}/health/ready`);
+    assert.equal(response.status, 200);
+    const summary = await response.json();
+    assert.equal(summary.status, "DEGRADED");
+    assert.equal(summary.ready, true);
+    assert.equal(summary.dataPlane.status, "degraded");
+    assert.equal(summary.dataPlane.retailSources.catalog.fallbackActive, true);
+    assert.equal(summary.dataPlane.retailSources.catalog.providerId, "retail-a1b2c3");
+    assert.equal(summary.dataPlane.retailSources.catalog.effectiveProviderId, "normal-3c-v1");
+    assert.equal(summary.dataPlane.retailSources.catalog.telemetry.fallbacks, 1);
+    assert.equal(summary.dependencies.dataPlane.required, true);
+    assert.equal(summary.dependencies.dataPlane.fallbackActive, true);
+    const serialized = JSON.stringify(summary);
+    assert.doesNotMatch(serialized, /provider\.invalid|must-not-cross|apiToken|upstreamUrl/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => python.close(() => resolve()));
+  }
+});
+
+test("readiness preserves sanitized per-source diagnostics from Python 503", async () => {
+  const payload = pythonRetailHealthPayload();
+  payload.status = "DOWN";
+  payload.ready = false;
+  payload.retailSources.catalog = retailSourceHealth(
+    "http",
+    "unavailable",
+    "down",
+    false,
+    "retail-a1b2c3",
+    null,
+  );
+  const python = createServer((_request, response) => {
+    const body = Buffer.from(JSON.stringify(payload));
+    response.writeHead(503, {
+      "content-type": "application/json",
+      "content-length": body.length,
+    });
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => python.listen(0, "127.0.0.1", resolve));
+  const pythonBaseUrl = `http://127.0.0.1:${(python.address() as AddressInfo).port}`;
+  const server = buildControlPlaneServer({
+    discoveryMode: "python",
+    discoveryBaseUrl: pythonBaseUrl,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const response = await fetch(`${baseUrl}/health/ready`);
+    assert.equal(response.status, 503);
+    const summary = await response.json();
+    assert.equal(summary.ready, false);
+    assert.equal(summary.dataPlane.status, "down");
+    assert.equal(summary.dataPlane.error, "retail_source_unavailable");
+    assert.equal(summary.dataPlane.retailSources.catalog.status, "down");
+    assert.equal(summary.dataPlane.retailSources.catalog.lastErrorCode, "provider_timeout");
+    assert.equal(summary.dataPlane.retailSources.catalog.providerId, "retail-a1b2c3");
+    assert.equal(summary.dataPlane.retailSources.catalog.effectiveProviderId, null);
+    assert.equal(summary.dataPlane.retailSources.catalog.telemetry.errors, 1);
+    assert.doesNotMatch(JSON.stringify(summary), /provider\.invalid|must-not-cross/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => python.close(() => resolve()));
+  }
+});
+
+test("readiness fails closed without reflecting malformed Python source identifiers", async () => {
+  const payload = pythonRetailHealthPayload();
+  payload.retailSources.catalog.providerId = "https://provider.invalid/token";
+  const python = createServer((_request, response) => {
+    const body = Buffer.from(JSON.stringify(payload));
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": body.length,
+    });
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => python.listen(0, "127.0.0.1", resolve));
+  const pythonBaseUrl = `http://127.0.0.1:${(python.address() as AddressInfo).port}`;
+  const server = buildControlPlaneServer({
+    discoveryMode: "python",
+    discoveryBaseUrl: pythonBaseUrl,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const response = await fetch(`${baseUrl}/health/ready`);
+    assert.equal(response.status, 503);
+    const summary = await response.json();
+    assert.equal(summary.ready, false);
+    assert.equal(summary.dataPlane.error, "invalid_retail_source_health");
+    assert.equal(summary.dataPlane.retailSources, null);
+    assert.doesNotMatch(JSON.stringify(summary), /provider\.invalid|token/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => python.close(() => resolve()));
+  }
+});
+
+test("readiness fails when the required Run repository is unavailable", async () => {
+  const repository = new CommerceRepository();
+  const server = buildControlPlaneServer({ repository });
+  repository.close();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    assert.equal((await fetch(`${baseUrl}/health/live`)).status, 200);
+    const response = await fetch(`${baseUrl}/health/ready`);
+    assert.equal(response.status, 503);
+    const summary = await response.json();
+    assert.equal(summary.status, "DOWN");
+    assert.equal(summary.dependencies.storage.required, true);
+    assert.equal(summary.dependencies.storage.status, "down");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 

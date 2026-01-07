@@ -1,4 +1,5 @@
 import { InMemoryArtifactStore, type Artifact, type ArtifactType } from "./artifacts.js";
+import { randomUUID } from "node:crypto";
 import { InMemoryDiscoveryChannels } from "./channels.js";
 import { BoundedCollaborationCoordinator } from "./collaboration.js";
 import type {
@@ -8,6 +9,7 @@ import type {
   CandidateEnvelope,
   ChannelResult,
   Critique,
+  DataSourceMetadata,
   DecisionEvidenceGateway,
   DecisionOptimizationGateway,
   DiscoveryChannels,
@@ -22,6 +24,10 @@ import type {
   SearchAdsRecsReply,
 } from "./contracts.js";
 import { InMemoryDecisionEvidenceGateway } from "./evidence.js";
+import {
+  createDefaultExtensionRegistries,
+  type RegisteredWorkflow,
+} from "./extension-registry.js";
 import { applyPriceQuotes, auditProposal, fuseSlate, proposeBundle } from "./fusion.js";
 import { ReplayPiRuntimeFactory, type PiRuntimeFactory } from "./pi-runtime.js";
 import { PiRoleAgent, TraceCollector } from "./role-agent.js";
@@ -29,19 +35,32 @@ import { buildRetrievalPlan } from "./router.js";
 import {
   ROLE_PROPOSAL_CONTRACTS,
   ROLE_SYSTEM_PROMPTS,
+  retrievalPlanProposalContract,
   resolveChannelRanking,
   resolveCritique,
   resolveFinalDecision,
   resolveRetrievalPlan,
   summarizeRuntime,
 } from "./model-policy.js";
-import { NORMAL_3C_DOMAIN } from "./domain-pack.js";
+import {
+  loadCatalogForDomainPack,
+  NORMAL_3C_DOMAIN,
+  type CommerceDomainPack,
+} from "./domain-pack.js";
 
 const CHANNEL_ROLES: Record<RetrievalChannel, AgentRole> = {
   search: "search",
   recommendation: "recommendation",
   ads: "ads",
 };
+
+function dataSourceTrace(source: DataSourceMetadata): Record<string, unknown> {
+  return {
+    source: source.source,
+    sourceVersion: source.sourceVersion,
+    providerId: source.providerId,
+  };
+}
 
 function supportsDecisionEvidence(
   value: DiscoveryChannels,
@@ -61,11 +80,15 @@ function supportsDecisionOptimization(
   return typeof candidate.fuse === "function" && typeof candidate.optimizeBundle === "function";
 }
 
-function missingBundleCategories(plan: RetrievalPlan, bundle: BundleProposal): ProductCategory[] {
+function missingBundleCategories(
+  plan: RetrievalPlan,
+  bundle: BundleProposal,
+  domain: CommerceDomainPack,
+): ProductCategory[] {
   if (plan.intent !== "bundle") return [];
   const selected = new Set(bundle.items.map((candidate) => candidate.product.category));
   return plan.requirements.requestedCategories.filter(
-    (category) => NORMAL_3C_DOMAIN.defaultBundleCategories.includes(category) && !selected.has(category),
+    (category) => domain.defaultBundleCategories.includes(category) && !selected.has(category),
   );
 }
 
@@ -74,13 +97,14 @@ function shouldRequestRevision(
   slate: CandidateEnvelope[],
   bundle: BundleProposal,
   critique: Critique,
+  domain: CommerceDomainPack,
 ): ProductCategory[] {
   if (
     critique.verdict !== "vetoed" ||
     !plan.channels.includes("recommendation") ||
     !critique.violations.includes("requested_category_coverage")
   ) return [];
-  return missingBundleCategories(plan, bundle).filter((category) =>
+  return missingBundleCategories(plan, bundle, domain).filter((category) =>
     slate.some((candidate) => {
       if (candidate.product.category !== category || candidate.product.stock <= 0) return false;
       return plan.requirements.budgetMax === null ||
@@ -130,19 +154,31 @@ export class SearchAdsRecsLeadAgent {
   readonly #channels: DiscoveryChannels;
   readonly #evidence: DecisionEvidenceGateway;
   readonly #optimizer: DecisionOptimizationGateway | null;
-  #nextRun = 1;
-
+  readonly #domain: CommerceDomainPack;
+  readonly #workflow: RegisteredWorkflow;
   constructor(options: {
     runtime?: PiRuntimeFactory;
     channels?: DiscoveryChannels;
     evidence?: DecisionEvidenceGateway;
+    domain?: CommerceDomainPack;
+    workflow?: RegisteredWorkflow;
   } = {}) {
+    this.#domain = options.domain ?? NORMAL_3C_DOMAIN;
+    this.#workflow = options.workflow ??
+      createDefaultExtensionRegistries().workflows.require(this.#domain.workflowId);
+    if (this.#workflow.id !== this.#domain.workflowId) {
+      throw new Error(`domain workflow mismatch: ${this.#domain.packId}`);
+    }
+    if (this.#workflow.capabilityProfileId !== this.#domain.capabilityProfileId) {
+      throw new Error(`domain capability profile mismatch: ${this.#domain.packId}`);
+    }
     this.#runtime = options.runtime ?? new ReplayPiRuntimeFactory();
-    this.#channels = options.channels ?? new InMemoryDiscoveryChannels();
+    const catalog = loadCatalogForDomainPack(this.#domain);
+    this.#channels = options.channels ?? new InMemoryDiscoveryChannels(catalog, this.#domain);
     this.#evidence = options.evidence ?? (
       supportsDecisionEvidence(this.#channels)
         ? this.#channels
-        : new InMemoryDecisionEvidenceGateway()
+        : new InMemoryDecisionEvidenceGateway(options.channels ? undefined : catalog)
     );
     this.#optimizer = supportsDecisionOptimization(this.#channels) ? this.#channels : null;
   }
@@ -152,10 +188,15 @@ export class SearchAdsRecsLeadAgent {
     onTrace?: (record: AgentTraceRecord) => void,
     discoveryContext: DiscoveryContext = {},
   ): Promise<SearchAdsRecsReply> {
-    const runId = `sar-run-${String(this.#nextRun++).padStart(4, "0")}`;
+    const runId = discoveryContext.executionRunId ?? `sar-run-${randomUUID()}`;
     const artifacts = new InMemoryArtifactStore();
     const trace = new TraceCollector(onTrace);
-    const collaboration = new BoundedCollaborationCoordinator(runId, trace);
+    const collaboration = new BoundedCollaborationCoordinator(
+      runId,
+      trace,
+      {},
+      this.#workflow.graph,
+    );
     const runSignal = discoveryContext.signal
       ? AbortSignal.any([discoveryContext.signal, collaboration.signal])
       : collaboration.signal;
@@ -184,7 +225,12 @@ export class SearchAdsRecsLeadAgent {
       return artifact;
     };
 
-    trace.add("lead", "run_started", { messageChars: message.length });
+    trace.add("lead", "run_started", {
+      messageChars: message.length,
+      domainPackId: this.#domain.packId,
+      workflowId: this.#domain.workflowId,
+      capabilityProfileId: this.#domain.capabilityProfileId,
+    });
     const planArtifact = await collaboration.delegate({
       delegatedBy: "lead",
       role: "intent_router",
@@ -199,11 +245,11 @@ export class SearchAdsRecsLeadAgent {
           artifactType: "retrieval_plan",
           status: "verified",
           input: { message },
-          proposalContract: ROLE_PROPOSAL_CONTRACTS.retrievalPlan,
+          proposalContract: retrievalPlanProposalContract(this.#domain),
           systemPrompt: ROLE_SYSTEM_PROMPTS.intent_router,
           execute: ({ message: authoritativeMessage }, proposal) =>
-            resolveRetrievalPlan(authoritativeMessage, proposal),
-          fallback: ({ message: authoritativeMessage }) => buildRetrievalPlan(authoritativeMessage),
+            resolveRetrievalPlan(authoritativeMessage, proposal, this.#domain),
+          fallback: ({ message: authoritativeMessage }) => buildRetrievalPlan(authoritativeMessage, this.#domain),
         });
       },
     });
@@ -250,8 +296,14 @@ export class SearchAdsRecsLeadAgent {
           }
           trace.add(role, "data_plane_result", {
             taskId: task.taskId,
+            resource: "catalog",
             channel: input.channel,
             candidateCount: result.candidates.length,
+            ...(result.dataSource
+              ? dataSourceTrace(result.dataSource)
+              : result.candidates[0]
+                ? dataSourceTrace(result.candidates[0].product.dataSource)
+                : {}),
           });
           if (input.useModel === false) {
             return publishTool({
@@ -304,7 +356,7 @@ export class SearchAdsRecsLeadAgent {
     });
     if (searchArtifact && plan.channels.includes("recommendation")) {
       const primaryCandidates = searchArtifact.payload.candidates.filter(
-        (candidate) => candidate.product.category === NORMAL_3C_DOMAIN.primaryCategory,
+        (candidate) => candidate.product.category === this.#domain.primaryCategory,
       );
       handoffArtifact = publishTool({
         type: "peer_handoff",
@@ -362,9 +414,10 @@ export class SearchAdsRecsLeadAgent {
           let fused: CandidateEnvelope[];
           try {
             fused = this.#optimizer
-              ? await this.#optimizer.fuse(channelResults)
+              ? await this.#optimizer.fuse(channelResults, undefined, runSignal)
               : fuseSlate(channelResults);
           } catch (error) {
+            runSignal.throwIfAborted();
             trace.add("lead", "degraded", {
               tier: "local_rrf_fallback",
               errorType: error instanceof Error ? error.name : "unknown",
@@ -394,14 +447,22 @@ export class SearchAdsRecsLeadAgent {
           let bundle: BundleProposal;
           try {
             bundle = this.#optimizer
-              ? await this.#optimizer.optimizeBundle(slate, plan)
-              : await proposeBundle(slate, plan, this.#evidence);
+              ? await this.#optimizer.optimizeBundle(slate, plan, runSignal)
+              : await proposeBundle(slate, plan, this.#evidence, [], this.#domain, runSignal);
           } catch (error) {
+            runSignal.throwIfAborted();
             trace.add("compatibility", "degraded", {
               tier: "local_constraint_optimizer_fallback",
               errorType: error instanceof Error ? error.name : "unknown",
             });
-            bundle = await proposeBundle(slate, plan, this.#evidence);
+            bundle = await proposeBundle(
+              slate,
+              plan,
+              this.#evidence,
+              [],
+              this.#domain,
+              runSignal,
+            );
           }
           return publishTool({
             type: "bundle_proposal",
@@ -418,28 +479,51 @@ export class SearchAdsRecsLeadAgent {
           role: "pricing",
           capability: "live_quote_tool",
           parentTaskId: bundleArtifact.artifactId,
-          execute: async (task) => publishTool({
-            type: "price_quote",
-            producer: "pricing",
-            parentTaskId: task.taskId,
-            status: "verified",
-            payload: await this.#evidence.quote(bundleArtifact.payload.items),
-          }),
+          execute: async (task) => {
+            const payload = await this.#evidence.quote(bundleArtifact.payload.items, runSignal);
+            trace.add("pricing", "data_plane_result", {
+              taskId: task.taskId,
+              resource: "pricing",
+              quoteBatchId: payload.quoteBatchId,
+              quoteVersion: payload.quoteVersion,
+              quoteCount: payload.quotes.length,
+              ...dataSourceTrace(payload.dataSource),
+            });
+            return publishTool({
+              type: "price_quote",
+              producer: "pricing",
+              parentTaskId: task.taskId,
+              status: "verified",
+              payload,
+            });
+          },
         }),
         collaboration.delegate({
           delegatedBy: "compatibility",
           role: "review_evidence",
           capability: "review_aspect_tool",
           parentTaskId: bundleArtifact.artifactId,
-          execute: async (task) => publishTool({
-            type: "review_evidence",
-            producer: "review_evidence",
-            parentTaskId: task.taskId,
-            status: "verified",
-            payload: await this.#evidence.reviewAspects(
+          execute: async (task) => {
+            const payload = await this.#evidence.reviewAspects(
               bundleArtifact.payload.items.map((item) => item.product.productId),
-            ),
-          }),
+              runSignal,
+            );
+            trace.add("review_evidence", "data_plane_result", {
+              taskId: task.taskId,
+              resource: "reviews",
+              reviewSnapshotVersion: payload.reviewSnapshotVersion,
+              productCount: payload.products.length,
+              missingProductCount: payload.missingProductIds.length,
+              ...dataSourceTrace(payload.dataSource),
+            });
+            return publishTool({
+              type: "review_evidence",
+              producer: "review_evidence",
+              parentTaskId: task.taskId,
+              status: "verified",
+              payload,
+            });
+          },
         }),
       ]);
       return {
@@ -486,7 +570,7 @@ export class SearchAdsRecsLeadAgent {
             bundle,
             quotes: priceQuote.quotes,
             reviews: reviewEvidence.products,
-            deterministicAudit: auditProposal(plan, slate, bundle, priceQuote, reviewEvidence),
+            deterministicAudit: auditProposal(plan, slate, bundle, priceQuote, reviewEvidence, this.#domain),
           },
           proposalContract: ROLE_PROPOSAL_CONTRACTS.critique,
           systemPrompt: ROLE_SYSTEM_PROMPTS.critic,
@@ -497,6 +581,7 @@ export class SearchAdsRecsLeadAgent {
               input.bundle,
               input.priceQuote,
               input.reviewEvidence,
+              this.#domain,
             );
             const confidences = input.reviewEvidence.products.flatMap((item) =>
               item.aspects.map((aspect) => aspect.confidence)
@@ -520,6 +605,7 @@ export class SearchAdsRecsLeadAgent {
             input.bundle,
             input.priceQuote,
             input.reviewEvidence,
+            this.#domain,
           ),
         });
       },
@@ -538,7 +624,7 @@ export class SearchAdsRecsLeadAgent {
     let critique = critiqueArtifact.payload;
     if (critique.verdict === "vetoed") critiqueArtifact.status = "vetoed";
 
-    const missingCategories = shouldRequestRevision(plan, slate, bundle, critique);
+    const missingCategories = shouldRequestRevision(plan, slate, bundle, critique, this.#domain);
     if (missingCategories.length > 0) {
       const revision: RevisionRequest = {
         attempt: 1,
@@ -584,7 +670,7 @@ export class SearchAdsRecsLeadAgent {
       bundle = evidence.bundle;
       priceQuote = evidence.priceQuote;
       reviewEvidence = evidence.reviewEvidence;
-      critique = auditProposal(plan, slate, bundle, priceQuote, reviewEvidence);
+      critique = auditProposal(plan, slate, bundle, priceQuote, reviewEvidence, this.#domain);
       critiqueArtifact = publishTool({
         type: "critique",
         producer: "critic",
@@ -654,6 +740,8 @@ export class SearchAdsRecsLeadAgent {
 
     return {
       runId,
+      domainPackId: this.#domain.packId,
+      workflowId: this.#workflow.id,
       message: finalArtifact.payload.message,
       plan,
       slate,

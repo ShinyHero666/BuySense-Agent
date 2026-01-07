@@ -1,0 +1,175 @@
+{
+  "catalog_version": "outdoor-camping-snapshot-v1",
+  "quote_version": "camping-quote-snapshot-2026-08-01",
+  "generated_at": "2026-08-01T00:00:00Z",
+  "spus": [
+    {
+      "spu_id": "spu-trailforge-alpine-stove",
+      "title": "TrailForge 高山防风炉",
+      "category": "camp_stove",
+      "brand": "TrailForge",
+      "tags": ["露营炉", "防风", "轻量", "高海拔", "en417"],
+      "skus": [
+        {
+          "sku_id": "sku-trailforge-alpine-stove",
+          "title": "TrailForge 高山防风炉 标准版",
+          "ecosystem": "universal",
+          "connectors": ["en417-thread", "pot-support-medium"],
+          "protocols": ["lindal-valve", "cookware-direct"],
+          "offers": [
+            {
+              "offer_id": "offer-trailforge-alpine-stove-self",
+              "seller_id": "moyuan-outdoor-self",
+              "price": 329,
+              "currency": "CNY",
+              "stock": 28,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-easyflame-cassette-stove",
+      "title": "EasyFlame 双人便携卡式炉",
+      "category": "camp_stove",
+      "brand": "EasyFlame",
+      "tags": ["卡式炉", "双人", "便携", "稳定"],
+      "skus": [
+        {
+          "sku_id": "sku-easyflame-cassette-stove",
+          "title": "EasyFlame 双人便携卡式炉",
+          "ecosystem": "universal",
+          "connectors": ["bayonet", "pot-support-wide"],
+          "protocols": ["butane-cassette", "cookware-direct"],
+          "offers": [
+            {
+              "offer_id": "offer-easyflame-cassette-stove-sponsored",
+              "seller_id": "campnova-market",
+              "price": 219,
+              "currency": "CNY",
+              "stock": 46,
+              "sponsored": true,
+              "ad_bid": 1.6,
+              "ad_quality": 0.88,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-trailforge-four-season-gas",
+      "title": "TrailForge EN417 四季高山气罐",
+      "category": "fuel_canister",
+      "brand": "TrailForge",
+      "tags": ["气罐", "高山气", "低温", "高海拔", "en417"],
+      "skus": [
+        {
+          "sku_id": "sku-trailforge-four-season-gas",
+          "title": "TrailForge EN417 四季高山气罐 230g",
+          "ecosystem": "universal",
+          "connectors": ["en417-thread"],
+          "protocols": ["lindal-valve"],
+          "offers": [
+            {
+              "offer_id": "offer-trailforge-four-season-gas-sponsored",
+              "seller_id": "trailforge-market",
+              "price": 49,
+              "currency": "CNY",
+              "stock": 120,
+              "sponsored": true,
+              "ad_bid": 1.2,
+              "ad_quality": 0.91,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-easyflame-butane-cassette",
+      "title": "EasyFlame 卡式炉丁烷气罐",
+      "category": "fuel_canister",
+      "brand": "EasyFlame",
+      "tags": ["气罐", "卡式气", "便携", "双人"],
+      "skus": [
+        {
+          "sku_id": "sku-easyflame-butane-cassette",
+          "title": "EasyFlame 卡式炉丁烷气罐 220g",
+          "ecosystem": "universal",
+          "connectors": ["bayonet"],
+          "protocols": ["butane-cassette"],
+          "offers": [
+            {
+              "offer_id": "offer-easyflame-butane-cassette-self",
+              "seller_id": "moyuan-outdoor-self",
+              "price": 25,
+              "currency": "CNY",
+              "stock": 160,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-ridgecook-titanium-pot",
+      "title": "RidgeCook 轻量钛锅 1.2L",
+      "category": "cookware",
+      "brand": "RidgeCook",
+      "tags": ["钛锅", "锅具", "轻量", "高海拔", "易清洁"],
+      "skus": [
+        {
+          "sku_id": "sku-ridgecook-titanium-pot",
+          "title": "RidgeCook 轻量钛锅 1.2L",
+          "ecosystem": "universal",
+          "connectors": ["pot-support-medium"],
+          "protocols": ["cookware-direct"],
+          "offers": [
+            {
+              "offer_id": "offer-ridgecook-titanium-pot-self",
+              "seller_id": "moyuan-outdoor-self",
+              "price": 259,
+              "currency": "CNY",
+              "stock": 35,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-campnova-family-cookset",
+      "title": "CampNova 双人露营套锅 2.5L",
+      "category": "cookware",
+      "brand": "CampNova",
+      "tags": ["套锅", "锅具", "双人", "稳定", "易清洁"],
+      "skus": [
+        {
+          "sku_id": "sku-campnova-family-cookset",
+          "title": "CampNova 双人露营套锅 2.5L",
+          "ecosystem": "universal",
+          "connectors": ["pot-support-wide"],
+          "protocols": ["cookware-direct"],
+          "offers": [
+            {
+              "offer_id": "offer-campnova-family-cookset-sponsored",
+              "seller_id": "campnova-market",
+              "price": 179,
+              "currency": "CNY",
+              "stock": 52,
+              "sponsored": true,
+              "ad_bid": 1.3,
+              "ad_quality": 0.9,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
