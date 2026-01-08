@@ -51,7 +51,8 @@ public class JavaRetailDataPlane {
     private static final Set<String> FUSION_FIELDS = Set.of("domain_pack_id", "channels", "limit");
     private static final Set<String> FUSION_CHANNEL_FIELDS = Set.of("channel", "items", "catalog_version", "quote_version", "data_source");
     private static final Set<String> BUNDLE_FIELDS = Set.of(
-            "domain_pack_id", "items", "requested_categories", "intent", "budget_max", "top_n");
+            "domain_pack_id", "items", "requested_categories", "use_cases",
+            "intent", "budget_max", "top_n");
 
     private final ObjectMapper mapper;
     private final Clock clock;
@@ -153,6 +154,7 @@ public class JavaRetailDataPlane {
         List<String> ids = stringList(object, "product_ids", false, 100);
         List<ObjectNode> products = new ArrayList<>();
         List<String> missing = new ArrayList<>();
+        String reviewProviderId = runtime.pack.packId + "-review-aggregator";
         for (String id : ids) {
             ObjectNode source = runtime.reviews.get(id);
             if (source == null) {
@@ -161,13 +163,13 @@ public class JavaRetailDataPlane {
                 ObjectNode copy = source.deepCopy();
                 copy.put("source", "local_snapshot");
                 copy.put("source_version", runtime.reviewVersion);
-                copy.put("provider_id", runtime.pack.packId);
+                copy.put("provider_id", reviewProviderId);
                 products.add(copy);
             }
         }
         return Map.of(
                 "review_snapshot_version", runtime.reviewVersion,
-                "data_source", source("local_snapshot", runtime.reviewVersion, runtime.pack.packId),
+                "data_source", source("local_snapshot", runtime.reviewVersion, reviewProviderId),
                 "products", products,
                 "missing_product_ids", missing);
     }
@@ -264,7 +266,9 @@ public class JavaRetailDataPlane {
         int limit = integer(object, "limit", 8, 1, 50);
         Map<String, List<String>> rankings = new LinkedHashMap<>();
         Map<String, ObjectNode> organicCandidates = new LinkedHashMap<>();
+        Map<String, LinkedHashSet<String>> organicReasons = new LinkedHashMap<>();
         Map<String, ObjectNode> sponsoredCandidates = new LinkedHashMap<>();
+        Map<String, Double> sponsoredNormalizedScores = new LinkedHashMap<>();
         Map<String, CommerceFusionEngine.CandidateSignals> signals = new LinkedHashMap<>();
 
         for (int channelIndex = 0; channelIndex < channelsNode.size(); channelIndex++) {
@@ -339,9 +343,20 @@ public class JavaRetailDataPlane {
                     strongestAdQuality = Math.max(strongestAdQuality, adQuality);
                     sponsored = true;
                     sponsoredCandidates.putIfAbsent(sku, candidate);
+                    sponsoredNormalizedScores.merge(
+                            sku,
+                            number(candidate, "normalized_score", 0.0),
+                            Math::max);
                 } else {
                     organicScore = Math.max(organicScore, channelScore);
-                    organicCandidates.putIfAbsent(sku, candidate);
+                    ObjectNode existingOrganic = organicCandidates.putIfAbsent(sku, candidate);
+                    if (existingOrganic != null
+                            && channelScore > number(existingOrganic, "channel_score", 0.0)) {
+                        existingOrganic.put("channel", channel);
+                        existingOrganic.put("channel_score", channelScore);
+                    }
+                    organicReasons.computeIfAbsent(sku, ignored -> new LinkedHashSet<>())
+                            .addAll(strings(candidate.path("reasons")));
                 }
                 signals.put(sku, new CommerceFusionEngine.CandidateSignals(
                         category,
@@ -350,7 +365,13 @@ public class JavaRetailDataPlane {
                         strongestAdQuality,
                         sponsored));
             }
-            rankings.put(channel, List.copyOf(ranking));
+            List<String> rankedIds = new ArrayList<>(ranking);
+            if ("ads".equals(channel)) {
+                rankedIds.sort(Comparator.comparingDouble(
+                        (String sku) -> sponsoredNormalizedScores.getOrDefault(sku, 0.0))
+                        .reversed());
+            }
+            rankings.put(channel, List.copyOf(rankedIds));
         }
 
         CommerceFusionEngine.FusionResult fused = CommerceFusionEngine.fuse(
@@ -358,9 +379,7 @@ public class JavaRetailDataPlane {
                 rankings,
                 signals,
                 limit);
-        double minimum = fused.organicScores().values().stream()
-                .min(Double::compare)
-                .orElse(0.0);
+        double minimum = 0.0;
         double maximum = fused.organicScores().values().stream()
                 .max(Double::compare)
                 .orElse(1.0);
@@ -375,9 +394,12 @@ public class JavaRetailDataPlane {
             item.remove("sources");
             ArrayNode sources = item.putArray("sources");
             fused.organicSources().getOrDefault(sku, List.of()).forEach(sources::add);
+            item.remove("reasons");
+            ArrayNode reasons = item.putArray("reasons");
+            organicReasons.getOrDefault(sku, new LinkedHashSet<>()).forEach(reasons::add);
             addReason(item, String.format(
                     Locale.ROOT,
-                    "organic_weighted_rrf=%.6f",
+                    "weighted_rrf=%.6f",
                     rawScore));
         }
 
@@ -393,31 +415,26 @@ public class JavaRetailDataPlane {
             if (sponsoredPolicy.disclosureRequired()) {
                 item.put("disclosure", "赞助");
             }
-            addReason(item, "sponsored_policy_passed=" + sponsoredPolicy.policyId());
+            addReason(item, "organic_quality_floor_passed");
         }
 
         List<ObjectNode> slate = new ArrayList<>();
         Set<String> sponsoredIds = Set.copyOf(fused.sponsoredIds());
-        Set<String> advertisedIds = Set.copyOf(rankings.getOrDefault("ads", List.of()));
         for (String sku : fused.slate()) {
             ObjectNode item = sponsoredIds.contains(sku)
                     ? sponsoredCandidates.get(sku)
                     : organicCandidates.get(sku);
             if (item == null) continue;
-            if (!sponsoredIds.contains(sku) && advertisedIds.contains(sku)) {
-                // The organic result remains eligible, but the same offer also entered
-                // the Ads channel for this request, so the user-visible result needs
-                // the same disclosure as an inserted sponsored placement.
-                item.put("disclosure", "赞助");
-                addReason(item, "sponsored_disclosure_overlap=organic_and_ads");
-            }
             slate.add(item);
         }
         return Map.of(
                 "fusion_version", "organic-weighted-rrf-v3",
                 "organic_weight_profile", rrfWeightProfile.profileId(),
                 "calibration_version", rrfWeightProfile.calibrationVersion(),
-                "organic_weights", rrfWeightProfile.weights(),
+                "organic_weights", Map.of(
+                        "search", rrfWeightProfile.weight("search"),
+                        "recommendation", rrfWeightProfile.weight("recommendation")),
+                "channel_weights", rrfWeightProfile.weights(),
                 "sponsored_policy", Map.of(
                         "policy_id", sponsoredPolicy.policyId(),
                         "organic_relevance_floor_ratio",
@@ -456,6 +473,13 @@ public class JavaRetailDataPlane {
         for (String category : requested) {
             if (!runtime.pack.categories.containsKey(category)) {
                 throw new JavaDataPlaneValidationException("requested_categories", "category is outside selected domain pack");
+            }
+        }
+        List<String> useCases = stringList(object, "use_cases", true, 100);
+        for (String useCase : useCases) {
+            if (!runtime.pack.useCases.contains(useCase)) {
+                throw new JavaDataPlaneValidationException(
+                        "use_cases", "value is outside selected domain pack");
             }
         }
         String intent = requiredText(object, "intent", "request");
@@ -497,7 +521,7 @@ public class JavaRetailDataPlane {
                 .toList();
         if (categoryLists.stream().allMatch(list -> !list.isEmpty())) {
             enumerateBundles(runtime, categoryLists, 0, new ArrayList<>(), budget,
-                    primaryCategory, allBundles);
+                    primaryCategory, useCases, allBundles);
         }
         allBundles.sort(Comparator
                 .comparingDouble((Map<String, Object> item) -> -((Number) item.get("score")).doubleValue())
@@ -659,6 +683,15 @@ public class JavaRetailDataPlane {
         out.put("stock", item.offer.stock);
         putStrings(out, "tags", item.tags);
         putStrings(out, "decision_facts", item.decisionFacts);
+        ArrayNode decisionEvidence = out.putArray("decision_evidence");
+        item.decisionEvidence.forEach(evidence -> {
+            ObjectNode node = decisionEvidence.addObject();
+            node.put("dimension", evidence.dimension);
+            node.put("statement", evidence.statement);
+            node.put("source_type", evidence.sourceType);
+            node.put("source_ref", evidence.sourceRef);
+            node.put("confidence", evidence.confidence);
+        });
         putStrings(out, "tradeoffs", item.tradeoffs);
         out.put("ecosystem", item.ecosystem);
         putStrings(out, "connectors", item.connectors);
@@ -789,7 +822,8 @@ public class JavaRetailDataPlane {
 
     private void enumerateBundles(PackRuntime runtime, List<List<ObjectNode>> categoryLists,
                                   int index, List<ObjectNode> combination, Double budget,
-                                  String primaryCategory, List<Map<String, Object>> output) {
+                                  String primaryCategory, List<String> useCases,
+                                  List<Map<String, Object>> output) {
         if (index == categoryLists.size()) {
             LinkedHashSet<String> skuIds = combination.stream()
                     .map(item -> textOr(item, "sku_id", ""))
@@ -810,7 +844,7 @@ public class JavaRetailDataPlane {
                 Item accessory = runtime.itemsBySku.get(textOr(accessoryCandidate, "sku_id", ""));
                 Map<String, Object> evaluated = accessory == null
                         ? evaluation("unknown", List.of("sku_not_found_in_graph"), null, List.of())
-                        : evaluateCompatibility(runtime, primary, accessory);
+                        : evaluateCompatibility(runtime, primary, accessory, useCases);
                 Map<String, Object> edge = new LinkedHashMap<>();
                 edge.put("product_id", primary.spuId);
                 edge.put("accessory_id", accessory == null
@@ -823,17 +857,22 @@ public class JavaRetailDataPlane {
                 if (!"compatible".equals(evaluated.get("status"))) compatible = false;
             }
             if (!compatible) return;
-            double relevance = combination.stream()
+            double fusedRelevance = combination.stream()
                     .mapToDouble(item -> number(item, "normalized_score", 0.0))
                     .average().orElse(0.0);
+            double channelRelevance = combination.stream()
+                    .mapToDouble(item -> number(item, "channel_score", 0.0))
+                    .average().orElse(0.0);
             int sponsored = (int) combination.stream().filter(item -> item.path("sponsored").asBoolean()).count();
-            double budgetValue = budgetFitness(budget, total, 0.90);
+            double budgetValue = budgetFitness(budget, total, 1.00);
             Map<String, Object> bundle = new LinkedHashMap<>();
             bundle.put("sku_ids", new ArrayList<>(skuIds));
             bundle.put("total_price", round2(total));
             bundle.put("budget_utilization", budget == null || budget == 0
                     ? null : round6(total / budget));
-            bundle.put("score", round6(0.68 * relevance + 0.32 * budgetValue - 0.04 * sponsored));
+            bundle.put("score", round6(
+                    fusedRelevance + channelRelevance
+                            + 0.32 * budgetValue - 0.04 * sponsored));
             bundle.put("sponsored_count", sponsored);
             bundle.put("compatibility", compatibility);
             output.add(bundle);
@@ -841,12 +880,21 @@ public class JavaRetailDataPlane {
         }
         for (ObjectNode candidate : categoryLists.get(index)) {
             combination.add(candidate);
-            enumerateBundles(runtime, categoryLists, index + 1, combination, budget, primaryCategory, output);
+            enumerateBundles(runtime, categoryLists, index + 1, combination, budget,
+                    primaryCategory, useCases, output);
             combination.remove(combination.size() - 1);
         }
     }
 
     private Map<String, Object> evaluateCompatibility(PackRuntime runtime, Item primary, Item accessory) {
+        return evaluateCompatibility(runtime, primary, accessory, List.of());
+    }
+
+    private Map<String, Object> evaluateCompatibility(
+            PackRuntime runtime,
+            Item primary,
+            Item accessory,
+            List<String> useCases) {
         Rule rule = runtime.rules.stream()
                 .filter(value -> value.primaryCategory.equals(primary.category)
                         && value.accessoryCategory.equals(accessory.category))
@@ -858,15 +906,37 @@ public class JavaRetailDataPlane {
         List<String> protocols = intersection(primary.protocols, accessory.protocols, rule.requiredProtocols);
         boolean connectorOk = rule.requiredConnectors.isEmpty() || !connectors.isEmpty();
         boolean protocolOk = rule.requiredProtocols.isEmpty() || !protocols.isEmpty();
+        boolean powerRuleApplies = rule.minimumAccessoryPowerRatio != null
+                && rule.triggerUseCases.stream().anyMatch(useCases::contains);
+        boolean powerKnown = primary.maxPowerWatts != null && accessory.maxPowerWatts != null;
+        int requiredAccessoryWatts = powerRuleApplies && primary.maxPowerWatts != null
+                ? (int) Math.ceil(primary.maxPowerWatts * rule.minimumAccessoryPowerRatio)
+                : 0;
+        boolean powerOk = !powerRuleApplies
+                || (powerKnown && accessory.maxPowerWatts >= requiredAccessoryWatts);
         List<String> paths = new ArrayList<>();
         connectors.forEach(value -> paths.add(primary.skuId + "-[HAS_CONNECTOR]->" + value
                 + "<-[HAS_CONNECTOR]-" + accessory.skuId));
         protocols.forEach(value -> paths.add(primary.skuId + "-[SUPPORTS_PROTOCOL]->" + value
                 + "<-[SUPPORTS_PROTOCOL]-" + accessory.skuId));
-        String status = connectorOk && protocolOk ? "compatible" : connectorOk ? "unknown" : "incompatible";
-        return evaluation(status, List.of(
-                connectorOk ? "connector_graph_match" : "connector_graph_mismatch",
-                protocolOk ? "protocol_graph_match" : "protocol_graph_unknown"), rule.ruleId, paths);
+        if (powerRuleApplies && powerKnown) {
+            paths.add(primary.skuId + "-[POWER_TARGET_" + requiredAccessoryWatts + "W]->"
+                    + accessory.skuId + "[" + accessory.maxPowerWatts + "W]");
+        }
+        String status = connectorOk && protocolOk && powerOk
+                ? "compatible"
+                : !connectorOk || (powerRuleApplies && powerKnown && !powerOk)
+                        ? "incompatible"
+                        : "unknown";
+        List<String> reasons = new ArrayList<>();
+        reasons.add(connectorOk ? "connector_graph_match" : "connector_graph_mismatch");
+        reasons.add(protocolOk ? "protocol_graph_match" : "protocol_graph_unknown");
+        if (powerRuleApplies) {
+            reasons.add(!powerKnown
+                    ? "power_evidence_missing"
+                    : powerOk ? "power_requirement_match" : "power_requirement_mismatch");
+        }
+        return evaluation(status, reasons, rule.ruleId, paths);
     }
 
     private Map<String, Object> evaluation(String status, List<String> reasons, String ruleId, List<String> paths) {
@@ -916,12 +986,32 @@ public class JavaRetailDataPlane {
             }
             List<Rule> rules = new ArrayList<>();
             for (JsonNode rule : graph.path("rules")) {
+                List<String> triggerUseCases = strings(rule.get("trigger_use_cases"));
+                JsonNode rawPowerRatio = rule.get("minimum_accessory_power_ratio");
+                Double minimumAccessoryPowerRatio = rawPowerRatio == null || rawPowerRatio.isNull()
+                        ? null
+                        : rawPowerRatio.asDouble(Double.NaN);
+                if (minimumAccessoryPowerRatio != null
+                        && (!Double.isFinite(minimumAccessoryPowerRatio)
+                        || minimumAccessoryPowerRatio <= 0
+                        || minimumAccessoryPowerRatio > 1)) {
+                    throw new JavaDataPlaneValidationException(
+                            "rule.minimum_accessory_power_ratio",
+                            "must be greater than 0 and at most 1");
+                }
+                if (triggerUseCases.isEmpty() != (minimumAccessoryPowerRatio == null)) {
+                    throw new JavaDataPlaneValidationException(
+                            "rule.power_constraint",
+                            "trigger_use_cases and power ratio must be configured together");
+                }
                 rules.add(new Rule(
                         requiredText(rule, "rule_id", "rule"),
                         requiredText(rule, "primary_category", "rule"),
                         requiredText(rule, "accessory_category", "rule"),
                         strings(rule.get("required_shared_connectors")),
-                        strings(rule.get("required_shared_protocols"))));
+                        strings(rule.get("required_shared_protocols")),
+                        triggerUseCases,
+                        minimumAccessoryPowerRatio));
             }
             Map<String, Item> bySku = new LinkedHashMap<>();
             Map<String, Item> byOffer = new LinkedHashMap<>();
@@ -977,6 +1067,7 @@ public class JavaRetailDataPlane {
 
     private List<Item> parseCatalog(JsonNode root, Pack pack) {
         List<Item> items = new ArrayList<>();
+        String catalogVersion = requiredText(root, "catalog_version", "catalog");
         for (JsonNode spu : root.path("spus")) {
             String spuId = requiredText(spu, "spu_id", "spu");
             String spuTitle = requiredText(spu, "title", "spu");
@@ -984,6 +1075,11 @@ public class JavaRetailDataPlane {
             String brand = requiredText(spu, "brand", "spu");
             List<String> tags = strings(spu.get("tags"));
             List<String> decisionFacts = strings(spu.get("decision_facts"));
+            List<DecisionEvidence> decisionEvidence = decisionEvidence(
+                    spu.get("decision_evidence"), decisionFacts, catalogVersion, spuId);
+            if (decisionFacts.isEmpty()) {
+                decisionFacts = decisionEvidence.stream().map(DecisionEvidence::statement).toList();
+            }
             List<String> tradeoffs = strings(spu.get("tradeoffs"));
             for (JsonNode sku : spu.path("skus")) {
                 String skuId = requiredText(sku, "sku_id", "sku");
@@ -994,7 +1090,8 @@ public class JavaRetailDataPlane {
                 Integer maxPower = sku.hasNonNull("max_power_watts") ? sku.get("max_power_watts").asInt() : null;
                 for (JsonNode offer : sku.path("offers")) {
                     items.add(new Item(
-                            spuId, spuTitle, category, brand, tags, decisionFacts, tradeoffs,
+                            spuId, spuTitle, category, brand, tags, decisionFacts,
+                            decisionEvidence, tradeoffs,
                             skuId, title, ecosystem,
                             connectors, protocols, maxPower,
                             new Offer(
@@ -1011,6 +1108,51 @@ public class JavaRetailDataPlane {
             }
         }
         return items;
+    }
+    private List<DecisionEvidence> decisionEvidence(
+            JsonNode value,
+            List<String> legacyFacts,
+            String catalogVersion,
+            String spuId
+    ) {
+        if (value == null || value.isNull()) {
+            return legacyFacts.stream()
+                    .map(statement -> new DecisionEvidence(
+                            "综合", statement, "catalog_snapshot",
+                            catalogVersion + ":" + spuId, 1.0))
+                    .toList();
+        }
+        if (!value.isArray() || value.size() > 50) {
+            throw new JavaDataPlaneValidationException(
+                    "spu.decision_evidence", "must be an array with at most 50 values");
+        }
+        List<DecisionEvidence> result = new ArrayList<>();
+        for (int index = 0; index < value.size(); index++) {
+            JsonNode raw = value.get(index);
+            if (!raw.isObject()) {
+                throw new JavaDataPlaneValidationException(
+                        "spu.decision_evidence[" + index + "]", "must be an object");
+            }
+            ObjectNode evidence = (ObjectNode) raw;
+            rejectUnknown(evidence, Set.of(
+                    "dimension", "statement", "source_type", "source_ref", "confidence"),
+                    "spu.decision_evidence[" + index + "]");
+            JsonNode confidence = evidence.get("confidence");
+            if (confidence == null || !confidence.isNumber()
+                    || !Double.isFinite(confidence.asDouble())
+                    || confidence.asDouble() < 0 || confidence.asDouble() > 1) {
+                throw new JavaDataPlaneValidationException(
+                        "spu.decision_evidence[" + index + "].confidence",
+                        "must be a finite number between 0 and 1");
+            }
+            result.add(new DecisionEvidence(
+                    requiredText(evidence, "dimension", "spu.decision_evidence[" + index + "]"),
+                    requiredText(evidence, "statement", "spu.decision_evidence[" + index + "]"),
+                    requiredText(evidence, "source_type", "spu.decision_evidence[" + index + "]"),
+                    requiredText(evidence, "source_ref", "spu.decision_evidence[" + index + "]"),
+                    confidence.asDouble()));
+        }
+        return List.copyOf(result);
     }
 
     private JsonNode read(String resource) throws IOException {
@@ -1297,6 +1439,7 @@ public class JavaRetailDataPlane {
             String brand,
             List<String> tags,
             List<String> decisionFacts,
+            List<DecisionEvidence> decisionEvidence,
             List<String> tradeoffs,
             String skuId,
             String title,
@@ -1307,6 +1450,13 @@ public class JavaRetailDataPlane {
             Offer offer) {
     }
 
+    private record DecisionEvidence(
+            String dimension,
+            String statement,
+            String sourceType,
+            String sourceRef,
+            double confidence) {
+    }
     private record Category(String label, List<String> terms) {
     }
 
@@ -1318,7 +1468,9 @@ public class JavaRetailDataPlane {
             String primaryCategory,
             String accessoryCategory,
             List<String> requiredConnectors,
-            List<String> requiredProtocols) {
+            List<String> requiredProtocols,
+            List<String> triggerUseCases,
+            Double minimumAccessoryPowerRatio) {
     }
 
     private record Pack(

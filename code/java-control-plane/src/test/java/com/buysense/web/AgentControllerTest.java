@@ -115,6 +115,22 @@ class AgentControllerTest {
                 .contains("run_created", "run_started", "task", "artifact", "policy_gate", "result");
         assertThat(runs.require(runId).getEvents())
                 .allMatch(event -> event.schemaVersion().equals("2.0"));
+        var artifactEvents = runs.require(runId).getEvents().stream()
+                .filter(event -> event.eventType().equals("artifact"))
+                .toList();
+        assertThat(artifactEvents)
+                .extracting(event -> String.valueOf(event.payload().get("artifactType")))
+                .contains(
+                        "retrieval_plan",
+                        "bundle_proposal",
+                        "price_quote",
+                        "review_evidence",
+                        "critique",
+                        "final_decision");
+        assertThat(artifactEvents)
+                .allMatch(event -> java.util.Set.of("draft", "verified", "vetoed")
+                        .contains(String.valueOf(event.payload().get("status"))))
+                .allMatch(event -> event.payload().get("parentTaskId") != null);
         int persistedEventCount = runs.require(runId).getEvents().size();
         var proposalTotal = completed.at("/result/decision/bundle/totalPrice").decimalValue();
 

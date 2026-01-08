@@ -26,8 +26,10 @@ public final class DomainPackRegistry {
             "data/outdoor_camping_domain_v1.json");
 
     private final Map<String, CommerceDomainPack> packs;
+    private final ExtensionRegistry extensions;
 
     public DomainPackRegistry(ObjectMapper mapper, ExtensionRegistry extensions) {
+        this.extensions = extensions;
         LinkedHashMap<String, CommerceDomainPack> loaded = new LinkedHashMap<>();
         for (String manifest : MANIFESTS) {
             CommerceDomainPack pack = load(mapper, manifest);
@@ -49,6 +51,10 @@ public final class DomainPackRegistry {
         CommerceDomainPack pack = packs.get(packId == null || packId.isBlank() ? DEFAULT_PACK_ID : packId);
         if (pack == null) throw new NoSuchElementException("unknown_domain_pack:" + packId);
         return pack;
+    }
+
+    public ExtensionRegistry.WorkflowGraph requireWorkflowGraph(String workflowId) {
+        return extensions.requireWorkflowGraph(workflowId);
     }
 
     public List<CommerceDomainPack> list() {
@@ -94,6 +100,8 @@ public final class DomainPackRegistry {
             String primaryCategory = category(root, "primary_category", categoryIds);
             List<String> bundle = strings(root, "default_bundle_categories");
             bundle.forEach(value -> requireCategory(value, "default_bundle_categories", categoryIds));
+            List<String> useCases = strings(root, "use_cases");
+            Map<String, String> useCaseAliases = useCaseAliases(root, useCases);
 
             List<CommerceDomainPack.BrandDefinition> brands = new ArrayList<>();
             for (JsonNode brand : array(root, "brands")) {
@@ -135,7 +143,8 @@ public final class DomainPackRegistry {
                     primaryCategory,
                     bundle,
                     categories,
-                    strings(root, "use_cases"),
+                    useCases,
+                    useCaseAliases,
                     brands,
                     strings(root, "protocol_terms"),
                     requirements,
@@ -212,6 +221,33 @@ public final class DomainPackRegistry {
             throw new IllegalArgumentException(field + " contains duplicate values");
         }
         return List.copyOf(values);
+    }
+
+    private static Map<String, String> useCaseAliases(
+            JsonNode root,
+            List<String> canonicalUseCases
+    ) {
+        JsonNode raw = root.path("use_case_aliases");
+        if (raw.isMissingNode()) return Map.of();
+        if (!raw.isObject()) {
+            throw new IllegalArgumentException("use_case_aliases must be an object");
+        }
+        Map<String, String> aliases = new LinkedHashMap<>();
+        raw.fields().forEachRemaining(entry -> {
+            String alias = entry.getKey().trim();
+            JsonNode rawCanonical = entry.getValue();
+            if (alias.isBlank() || !rawCanonical.isTextual()
+                    || rawCanonical.asText().isBlank()) {
+                throw new IllegalArgumentException("use_case_aliases contains an invalid entry");
+            }
+            String canonical = rawCanonical.asText().trim();
+            if (!canonicalUseCases.contains(canonical)) {
+                throw new IllegalArgumentException(
+                        "use_case_aliases references unknown use case: " + canonical);
+            }
+            aliases.put(alias, canonical);
+        });
+        return Map.copyOf(aliases);
     }
 
     private static String asset(JsonNode root, String field) {

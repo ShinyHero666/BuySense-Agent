@@ -15,6 +15,7 @@ public record CommerceDomainPack(
         List<String> defaultBundleCategories,
         List<CategoryDefinition> categories,
         List<String> useCases,
+        Map<String, String> useCaseAliases,
         List<BrandDefinition> brands,
         List<String> protocolTerms,
         Map<String, CategoryRequirement> categoryRequirements,
@@ -25,6 +26,7 @@ public record CommerceDomainPack(
         defaultBundleCategories = List.copyOf(defaultBundleCategories);
         categories = List.copyOf(categories);
         useCases = List.copyOf(useCases);
+        useCaseAliases = Map.copyOf(useCaseAliases);
         brands = List.copyOf(brands);
         protocolTerms = List.copyOf(protocolTerms);
         categoryRequirements = Map.copyOf(categoryRequirements);

@@ -20,10 +20,20 @@ import java.util.regex.Pattern;
 
 @Component
 public class IntentParser {
-    private static final Pattern BUDGET = Pattern.compile(
-            "(?:预算|总价)[^\\d]{0,8}(\\d{1,9})|(?:不超过|控制在)\\s*(\\d{1,9})");
+    private static final String BUDGET_AMOUNT =
+            "(?:人民币|[¥￥])?\\s*(\\d{1,3}(?:,\\d{3})+|\\d{1,9}(?:\\.\\d{1,2})?)\\s*(万|千|[kKwW])?";
+    private static final List<Pattern> BUDGET_PATTERNS = List.of(
+            Pattern.compile(
+                    "(?:总预算|预算|总价|价格(?:上限)?|上限|不超过|控制在|最多(?:花|出)?)"
+                            + "\\s*(?:大约|约|只有|为|是|最多)?[^\\d¥￥]{0,4}"
+                            + BUDGET_AMOUNT),
+            Pattern.compile(
+                    BUDGET_AMOUNT
+                            + "\\s*(?:元|块(?:钱)?)?\\s*(?:以内|以下|内|封顶|上限|预算)"));
     private static final List<String> BUNDLE_TERMS = List.of("搭配", "套装", "一套", "配一个");
-    private static final List<String> AD_OPT_OUT_TERMS = List.of("不要广告", "不看广告", "无广告");
+    private static final List<String> AD_OPT_OUT_TERMS = List.of(
+            "不要广告", "不要竞价广告", "不看广告", "无广告", "拒绝广告", "关闭广告",
+            "排除广告", "不接受广告", "不要赞助", "不看赞助", "只看自然", "只要自然结果");
     private static final String TURN_ID = "turn-current";
 
     private final DomainPackRegistry domains;
@@ -66,8 +76,20 @@ public class IntentParser {
                 .map(CommerceDomainPack.BrandDefinition::name)
                 .distinct()
                 .toList();
-        List<String> useCases = domain.useCases().stream()
+        LinkedHashSet<String> matchedUseCases = new LinkedHashSet<>();
+        domain.useCases().stream()
                 .filter(normalized::contains)
+                .forEach(matchedUseCases::add);
+        domain.useCaseAliases().forEach((term, canonical) -> {
+            if (normalized.contains(term.toLowerCase(Locale.ROOT))) {
+                matchedUseCases.add(canonical);
+            }
+        });
+        List<String> useCases = domain.useCases().stream()
+                .filter(matchedUseCases::contains)
+                .toList();
+        List<String> protocolTerms = domain.protocolTerms().stream()
+                .filter(term -> normalized.contains(term.toLowerCase(Locale.ROOT)))
                 .distinct()
                 .toList();
         BigDecimal budget = budget(normalized);
@@ -108,6 +130,15 @@ public class IntentParser {
                     ConstraintStrength.SOFT,
                     1));
         }
+        for (int index = 0; index < protocolTerms.size(); index++) {
+            constraints.add(constraint(
+                    "constraint-protocol-" + index,
+                    "protocolTerms",
+                    protocolTerms.get(index),
+                    ConstraintSource.EXPLICIT_USER,
+                    ConstraintStrength.HARD,
+                    1));
+        }
         return new Requirement(
                 normalized,
                 normalized,
@@ -133,9 +164,18 @@ public class IntentParser {
     }
 
     private static BigDecimal budget(String message) {
-        Matcher matcher = BUDGET.matcher(message);
-        if (!matcher.find()) return null;
-        String value = matcher.group(1) == null ? matcher.group(2) : matcher.group(1);
-        return value == null ? null : new BigDecimal(value);
+        for (Pattern pattern : BUDGET_PATTERNS) {
+            Matcher matcher = pattern.matcher(message);
+            if (!matcher.find()) continue;
+            BigDecimal value = new BigDecimal(matcher.group(1).replace(",", ""));
+            String unit = matcher.group(2);
+            if (unit == null) return value;
+            return switch (unit.toLowerCase(Locale.ROOT)) {
+                case "千", "k" -> value.multiply(BigDecimal.valueOf(1_000));
+                case "万", "w" -> value.multiply(BigDecimal.valueOf(10_000));
+                default -> value;
+            };
+        }
+        return null;
     }
 }

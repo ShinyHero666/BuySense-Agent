@@ -1,7 +1,9 @@
 package com.buysense.evaluation;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public record EvaluationCase(
         String caseId,
@@ -11,7 +13,8 @@ public record EvaluationCase(
         int trials,
         ExpectedBehavior expected,
         Discovery discovery,
-        List<String> manualReviewRubrics
+        List<String> manualReviewRubrics,
+        List<JudgeRubric> judgeRubrics
 ) {
     public EvaluationCase {
         tags = tags == null ? List.of() : List.copyOf(tags);
@@ -20,6 +23,47 @@ public record EvaluationCase(
         manualReviewRubrics = manualReviewRubrics == null
                 ? List.of()
                 : List.copyOf(manualReviewRubrics);
+        judgeRubrics = judgeRubrics == null ? List.of() : List.copyOf(judgeRubrics);
+    }
+
+    public EvaluationCase(
+            String caseId,
+            String domainPackId,
+            String prompt,
+            List<String> tags,
+            int trials,
+            ExpectedBehavior expected,
+            Discovery discovery,
+            List<String> manualReviewRubrics
+    ) {
+        this(
+                caseId,
+                domainPackId,
+                prompt,
+                tags,
+                trials,
+                expected,
+                discovery,
+                manualReviewRubrics,
+                List.of());
+    }
+
+    public enum RubricEnforcement {
+        BLOCKING,
+        ADVISORY
+    }
+
+    public record JudgeRubric(
+            String rubricId,
+            String criterion,
+            Integer minimumScore,
+            RubricEnforcement enforcement,
+            boolean humanCalibrationRequired
+    ) {
+        public JudgeRubric {
+            minimumScore = minimumScore == null ? 4 : minimumScore;
+            enforcement = enforcement == null ? RubricEnforcement.BLOCKING : enforcement;
+        }
     }
 
     public record ExpectedBehavior(
@@ -44,7 +88,14 @@ public record EvaluationCase(
             Integer maxTasks,
             Integer maxModelCalls,
             Integer maxRevisionAttempts,
-            Long maxLatencyMs
+            Long maxLatencyMs,
+            List<String> requiredSelectedProductIds,
+            List<String> requiredSelectedBrands,
+            Map<String, List<String>> requiredTagsByCategory,
+            Map<String, List<String>> requiredConnectorsByCategory,
+            Map<String, List<String>> requiredProtocolsByCategory,
+            Map<String, Integer> minimumPowerWattsByCategory,
+            Integer minSponsoredSelectedItems
     ) {
         public ExpectedBehavior {
             expectedParsedCategories = copy(expectedParsedCategories);
@@ -56,10 +107,25 @@ public record EvaluationCase(
             requiredTraceEvents = copy(requiredTraceEvents);
             requiredResponsePhrases = copy(requiredResponsePhrases);
             forbiddenResponsePhrases = copy(forbiddenResponsePhrases);
+            requiredSelectedProductIds = copy(requiredSelectedProductIds);
+            requiredSelectedBrands = copy(requiredSelectedBrands);
+            requiredTagsByCategory = copyLists(requiredTagsByCategory);
+            requiredConnectorsByCategory = copyLists(requiredConnectorsByCategory);
+            requiredProtocolsByCategory = copyLists(requiredProtocolsByCategory);
+            minimumPowerWattsByCategory = minimumPowerWattsByCategory == null
+                    ? Map.of()
+                    : Map.copyOf(minimumPowerWattsByCategory);
         }
 
         private static List<String> copy(List<String> values) {
             return values == null ? List.of() : List.copyOf(values);
+        }
+
+        private static Map<String, List<String>> copyLists(Map<String, List<String>> values) {
+            if (values == null) return Map.of();
+            Map<String, List<String>> copy = new LinkedHashMap<>();
+            values.forEach((key, value) -> copy.put(key, copy(value)));
+            return Map.copyOf(copy);
         }
     }
 

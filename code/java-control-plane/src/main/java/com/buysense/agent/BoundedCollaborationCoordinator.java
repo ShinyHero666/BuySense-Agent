@@ -7,9 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 /**
  * Bounded collaboration task board for BuySense decision runs.
@@ -48,6 +50,9 @@ public final class BoundedCollaborationCoordinator {
     private final TraceSink trace;
     private final long deadlineNanos;
     private final Semaphore slots;
+    private final Map<String, Set<String>> allowedDelegations;
+    private final Map<String, Set<String>> roleCapabilities;
+    private final BooleanSupplier cancellationRequested;
     private final AtomicInteger nextTask = new AtomicInteger(1);
     private final AtomicInteger nextProposal = new AtomicInteger(1);
     private final AtomicInteger modelCalls = new AtomicInteger();
@@ -59,11 +64,41 @@ public final class BoundedCollaborationCoordinator {
     }
 
     public BoundedCollaborationCoordinator(String runId, TraceSink trace, Policy policy) {
+        this(runId, trace, policy, ALLOWED_DELEGATIONS, ROLE_CAPABILITIES);
+    }
+
+    public BoundedCollaborationCoordinator(
+            String runId,
+            TraceSink trace,
+            Policy policy,
+            Map<String, Set<String>> allowedDelegations,
+            Map<String, Set<String>> roleCapabilities
+    ) {
+        this(runId, trace, policy, allowedDelegations, roleCapabilities, () -> false);
+    }
+
+    public BoundedCollaborationCoordinator(
+            String runId,
+            TraceSink trace,
+            Policy policy,
+            Map<String, Set<String>> allowedDelegations,
+            Map<String, Set<String>> roleCapabilities,
+            BooleanSupplier cancellationRequested
+    ) {
         this.runId = runId;
         this.trace = trace;
         this.policy = policy;
+        this.allowedDelegations = immutableGraph(allowedDelegations);
+        this.roleCapabilities = immutableGraph(roleCapabilities);
+        this.cancellationRequested = cancellationRequested;
         this.deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(policy.deadlineMs());
         this.slots = new Semaphore(policy.maxConcurrent(), true);
+    }
+
+    private static Map<String, Set<String>> immutableGraph(Map<String, Set<String>> source) {
+        Map<String, Set<String>> copy = new LinkedHashMap<>();
+        source.forEach((key, values) -> copy.put(key, Set.copyOf(values)));
+        return Map.copyOf(copy);
     }
 
     public int consumeModelCall(String role) {
@@ -154,6 +189,25 @@ public final class BoundedCollaborationCoordinator {
             int revisionAttempt,
             Callable<T> action
     ) {
+        return delegate(
+                delegatedBy,
+                role,
+                capability,
+                parentTaskId,
+                depth,
+                revisionAttempt,
+                ignored -> action.call());
+    }
+
+    public <T> T delegate(
+            String delegatedBy,
+            String role,
+            String capability,
+            String parentTaskId,
+            int depth,
+            int revisionAttempt,
+            TaskAction<T> action
+    ) {
         assertDeadline();
         if (!canDelegate(delegatedBy, role)) {
             throw new IllegalStateException("collaboration_delegation_denied:" + delegatedBy + "->" + role);
@@ -193,7 +247,8 @@ public final class BoundedCollaborationCoordinator {
             trace.add(role, "task_started", Map.of(
                     "taskId", task.taskId(), "capability", capability,
                     "parentTaskId", nullToEmpty(parentTaskId)));
-            T value = action.call();
+            T value = action.call(task);
+            assertDeadline();
             update(task.taskId(), "completed");
             trace.add(role, "task_completed", Map.of("taskId", task.taskId(), "capability", capability));
             return value;
@@ -203,6 +258,15 @@ public final class BoundedCollaborationCoordinator {
                     "taskId", task.taskId(), "capability", capability,
                     "errorType", error.getClass().getSimpleName()));
             throw error;
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            update(task.taskId(), "failed");
+            trace.add(role, "task_failed", Map.of(
+                    "taskId", task.taskId(), "capability", capability,
+                    "errorType", "CancellationException"));
+            CancellationException cancelled = new CancellationException("run cancelled");
+            cancelled.initCause(error);
+            throw cancelled;
         } catch (Exception error) {
             update(task.taskId(), "failed");
             trace.add(role, "task_failed", Map.of(
@@ -230,6 +294,11 @@ public final class BoundedCollaborationCoordinator {
         return policy;
     }
 
+
+    /** Allows an in-flight role Agent to enforce the coordinator-owned run deadline. */
+    public void assertActive() {
+        assertDeadline();
+    }
     private synchronized void update(String taskId, String status) {
         for (int index = 0; index < tasks.size(); index++) {
             Task task = tasks.get(index);
@@ -241,14 +310,17 @@ public final class BoundedCollaborationCoordinator {
     }
 
     private boolean canDelegate(String from, String to) {
-        return ALLOWED_DELEGATIONS.getOrDefault(from, Set.of()).contains(to);
+        return allowedDelegations.getOrDefault(from, Set.of()).contains(to);
     }
 
     private boolean hasCapability(String role, String capability) {
-        return ROLE_CAPABILITIES.getOrDefault(role, Set.of()).contains(capability);
+        return roleCapabilities.getOrDefault(role, Set.of()).contains(capability);
     }
 
     private void assertDeadline() {
+        if (Thread.currentThread().isInterrupted() || cancellationRequested.getAsBoolean()) {
+            throw new CancellationException("run cancelled");
+        }
         if (System.nanoTime() >= deadlineNanos) {
             throw new IllegalStateException("collaboration_deadline_exceeded");
         }
@@ -261,6 +333,11 @@ public final class BoundedCollaborationCoordinator {
     @FunctionalInterface
     public interface TraceSink {
         void add(String role, String event, Map<String, Object> detail);
+    }
+
+    @FunctionalInterface
+    public interface TaskAction<T> {
+        T call(Task task) throws Exception;
     }
 
     public record Policy(

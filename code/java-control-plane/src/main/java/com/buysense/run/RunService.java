@@ -1,7 +1,6 @@
 package com.buysense.run;
 
 import com.buysense.agent.SearchAdsRecsLeadService;
-import com.buysense.agent.ModelPortAgentBridge;
 import com.buysense.domain.Candidate;
 import com.buysense.domain.DecisionResult;
 import com.buysense.domain.Product;
@@ -15,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -24,17 +24,20 @@ import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 public class RunService {
     private final Map<String, AgentRun> runs = new ConcurrentHashMap<>();
-    private final Map<String, CopyOnWriteArrayList<SseEmitter>> subscribers = new ConcurrentHashMap<>();
+    private final Map<String, CopyOnWriteArrayList<Subscription>> subscribers = new ConcurrentHashMap<>();
+    private final Map<String, Object> eventLocks = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> sequences = new ConcurrentHashMap<>();
     private final SearchAdsRecsLeadService decisionService;
-    private final ModelPortAgentBridge modelPort;
     private final RetailDataGateway retail;
     private final RunRepository repository;
     private final RunExecutionProperties executionProperties;
@@ -42,17 +45,16 @@ public class RunService {
     private final String workerId = UUID.randomUUID().toString();
     private final Map<String, RunRepository.Lease> activeLeases = new ConcurrentHashMap<>();
     private final Set<String> submittedRuns = ConcurrentHashMap.newKeySet();
+    private final Map<String, ExecutionControl> activeExecutions = new ConcurrentHashMap<>();
 
     public RunService(
             SearchAdsRecsLeadService decisionService,
-            ModelPortAgentBridge modelPort,
             RetailDataGateway retail,
             RunRepository repository,
             RunExecutionProperties executionProperties,
             @Qualifier("agentExecutor") Executor executor
     ) {
         this.decisionService = decisionService;
-        this.modelPort = modelPort;
         this.retail = retail;
         this.repository = repository;
         this.executionProperties = executionProperties;
@@ -285,16 +287,29 @@ public class RunService {
 
     private void submit(AgentRun run, boolean recovering) {
         if (!submittedRuns.add(run.getRunId())) return;
+        ExecutionControl control = new ExecutionControl();
+        if (activeExecutions.putIfAbsent(run.getRunId(), control) != null) {
+            submittedRuns.remove(run.getRunId());
+            return;
+        }
+        FutureTask<Void> task = new FutureTask<>(() -> {
+            execute(run, control);
+            return null;
+        });
+        control.attach(task);
         try {
             executor.execute(() -> {
                 try {
-                    execute(run);
+                    task.run();
                 } finally {
                     submittedRuns.remove(run.getRunId());
+                    activeExecutions.remove(run.getRunId(), control);
                 }
             });
         } catch (TaskRejectedException rejected) {
             submittedRuns.remove(run.getRunId());
+            activeExecutions.remove(run.getRunId(), control);
+            task.cancel(false);
             if (recovering) return;
             run.prepareFailure(rejected);
             RunEvent terminalEvent = appendInMemory(run, "run_failed", Map.of(
@@ -319,6 +334,10 @@ public class RunService {
                         runId,
                         lease,
                         new RunRepository.Lease(lease.owner(), lease.token(), expiresAt));
+            } else {
+                activeLeases.remove(runId, lease);
+                ExecutionControl control = activeExecutions.get(runId);
+                if (control != null) control.cancel();
             }
         });
     }
@@ -413,6 +432,8 @@ public class RunService {
         run.transition("cancelled");
         repository.updateWithEvent(run, event);
         publish(run, event);
+        ExecutionControl control = activeExecutions.get(run.getRunId());
+        if (control != null) control.cancel();
         completeSubscribers(run.getRunId());
         return run;
     }
@@ -428,36 +449,65 @@ public class RunService {
     private SseEmitter subscribe(AgentRun run, long afterSequence) {
         String runId = run.getRunId();
         SseEmitter emitter = new SseEmitter(0L);
-        subscribers.computeIfAbsent(runId, ignored -> new CopyOnWriteArrayList<>()).add(emitter);
-        emitter.onCompletion(() -> remove(runId, emitter));
-        emitter.onTimeout(() -> remove(runId, emitter));
-        emitter.onError(error -> remove(runId, emitter));
+        Subscription subscription = new Subscription(emitter, new AtomicLong(afterSequence));
+        Object eventLock = eventLocks.computeIfAbsent(runId, ignored -> new Object());
+        emitter.onCompletion(() -> remove(runId, subscription));
+        emitter.onTimeout(() -> remove(runId, subscription));
+        emitter.onError(error -> remove(runId, subscription));
 
-        List<RunEvent> firstSnapshot = run.getEvents();
-        firstSnapshot.stream().filter(event -> event.sequence() > afterSequence)
-                .forEach(event -> send(emitter, event));
-        long replayedThrough = firstSnapshot.stream().mapToLong(RunEvent::sequence)
-                .max().orElse(afterSequence);
-        AgentRun latest = require(runId);
-        latest.getEvents().stream().filter(event -> event.sequence() > replayedThrough)
-                .forEach(event -> send(emitter, event));
-        if (isTerminal(latest.getStatus())) {
-            remove(runId, emitter);
+        boolean terminal;
+        synchronized (eventLock) {
+            subscribers.computeIfAbsent(runId, ignored -> new CopyOnWriteArrayList<>())
+                    .add(subscription);
+            List<RunEvent> replayed = repository.listEventsAfter(runId, afterSequence);
+            replayed.forEach(event -> send(runId, subscription, event));
+            terminal = isTerminal(run.getStatus()) || replayed.stream().anyMatch(this::isTerminalEvent);
+        }
+        if (terminal) {
+            remove(runId, subscription);
             emitter.complete();
         }
         return emitter;
     }
 
+    @Scheduled(fixedDelayString = "${buysense.runs.sse-replay-delay:PT1S}")
+    public void replayPersistedEvents() {
+        subscribers.forEach((runId, ignored) -> {
+            Object eventLock = eventLocks.computeIfAbsent(runId, key -> new Object());
+            List<RunEvent> replayed;
+            synchronized (eventLock) {
+                var active = subscribers.get(runId);
+                if (active == null || active.isEmpty()) return;
+                long afterSequence = active.stream()
+                        .mapToLong(subscription -> subscription.cursor().get())
+                        .min().orElse(0L);
+                replayed = repository.listEventsAfter(runId, afterSequence);
+                replayed.forEach(event ->
+                        active.forEach(subscription -> send(runId, subscription, event)));
+            }
+            if (replayed.stream().anyMatch(this::isTerminalEvent)) {
+                completeSubscribers(runId);
+            }
+        });
+    }
+
     @Scheduled(fixedDelay = 15_000L)
     public void sendHeartbeats() {
-        subscribers.forEach((runId, emitters) -> emitters.forEach(emitter -> {
-            try {
-                emitter.send(SseEmitter.event().comment("heartbeat"));
-            } catch (IOException | IllegalStateException error) {
-                remove(runId, emitter);
-                emitter.complete();
+        subscribers.forEach((runId, ignored) -> {
+            Object eventLock = eventLocks.computeIfAbsent(runId, key -> new Object());
+            synchronized (eventLock) {
+                var active = subscribers.get(runId);
+                if (active == null) return;
+                active.forEach(subscription -> {
+                    try {
+                        subscription.emitter().send(SseEmitter.event().comment("heartbeat"));
+                    } catch (IOException | IllegalStateException error) {
+                        remove(runId, subscription);
+                        subscription.emitter().complete();
+                    }
+                });
             }
-        }));
+        });
     }
 
     public AgentRun requireCartDraftOwned(String draftId, String sessionId) {
@@ -490,6 +540,11 @@ public class RunService {
     }
 
     private void execute(AgentRun run) {
+        execute(run, new ExecutionControl());
+    }
+
+    private void execute(AgentRun run, ExecutionControl control) {
+        boolean resumed = "running".equals(run.getStatus());
         Instant leaseStarted = Instant.now();
         RunRepository.Lease lease = repository.acquireLease(
                         run.getRunId(),
@@ -502,11 +557,12 @@ public class RunService {
         run.transition("running");
 
         try {
-            if (run.isCancellationRequested()) return;
+            if (cancelled(run, control)) return;
             emit(run, "run_started", Map.of(
                     "event", "task_started",
                     "role", "lead",
-                    "status", "running"));
+                    "status", "running",
+                    "resumed", resumed));
             if (run.isConfirmationRequested()) {
                 executeConfirmation(run);
                 return;
@@ -522,57 +578,10 @@ public class RunService {
                             persistedContext.excludedProductIds(),
                             persistedContext.adExposureProductIds());
             SearchAdsRecsLeadService.Execution execution = decisionService.decide(
-                    run.getRunId(), run.getMessage(), run.getDomainPackId(), discoveryContext);
+                    run.getRunId(), run.getMessage(), run.getDomainPackId(), discoveryContext,
+                    () -> cancelled(run, control),
+                    trace -> emitTrace(run, trace));
             DecisionResult result = execution.result();
-            var requirement = result.requirement();
-
-            emit(run, "artifact", Map.of(
-                    "event", "artifact_published",
-                    "role", "intent_router",
-                    "artifactType", "retrieval_plan",
-                    "domainPackId", run.getDomainPackId(),
-                    "workflowId", run.getWorkflowId(),
-                    "requiredCategories", requirement.requiredCategories(),
-                    "constraintCount", requirement.constraints().size()));
-
-            execution.tasks().forEach(task -> {
-                Map<String, Object> payload = new LinkedHashMap<>();
-                payload.put("event", "task_completed");
-                payload.put("role", task.role());
-                payload.put("to", task.role());
-                payload.put("taskId", task.taskId());
-                if (task.parentTaskId() != null) payload.put("parentTaskId", task.parentTaskId());
-                payload.put("capability", task.capability());
-                payload.put("status", task.status());
-                payload.put("revisionAttempt", task.revisionAttempt());
-                emit(run, "task", Map.copyOf(payload));
-            });
-            execution.proposals().forEach(proposal -> {
-                Map<String, Object> payload = new LinkedHashMap<>();
-                payload.put("event", "delegation_proposal_reviewed");
-                payload.put("role", proposal.proposedBy());
-                payload.put("to", proposal.role());
-                payload.put("capability", proposal.capability());
-                payload.put("proposalId", proposal.proposalId());
-                payload.put("status", proposal.status());
-                if (proposal.rejectionReason() != null) {
-                    payload.put("rejectionReason", proposal.rejectionReason());
-                }
-                emit(run, "policy_gate", Map.copyOf(payload));
-            });
-            execution.roleCalls().forEach(call -> emitModelCall(run, call));
-
-            emitChannelResult(run, result, "search", "searchCandidates");
-            emitChannelResult(run, result, "recommendation", "recommendationCandidates");
-            if (requirement.sponsoredAllowed()) {
-                emitChannelResult(run, result, "ads", "adCandidates");
-            }
-            emit(run, "artifact", Map.of(
-                    "event", "artifact_published",
-                    "role", "compatibility",
-                    "artifactType", "decision_slate",
-                    "slateSize", result.slate().size(),
-                    "bundleCount", result.bundles().size()));
 
             boolean approved = "approved".equals(result.metrics().get("criticVerdict"))
                     && qualified(result);
@@ -583,12 +592,15 @@ public class RunService {
                     "approved", approved,
                     "violations", result.metrics().getOrDefault("criticViolations", List.of()),
                     "revisionApplied", execution.revisionApplied()));
-            if (run.isCancellationRequested()) return;
+            if (cancelled(run, control)) return;
             run.prepareResult(result, approved ? "proposal" : "needs_replan");
             complete(run, approved ? "proposal" : "needs_replan");
+        } catch (CancellationException ignored) {
+            return;
         } catch (RunRepository.LeaseLostException ignored) {
             return;
         } catch (Throwable throwable) {
+            if (cancelled(run, control)) return;
             run.prepareFailure(throwable);
             RunEvent terminalEvent = appendInMemory(run, "run_failed", Map.of(
                     "event", "run_failed",
@@ -608,15 +620,31 @@ public class RunService {
         }
     }
 
+    private void emitTrace(AgentRun run, DecisionResult.TraceStep trace) {
+        Map<String, Object> payload = new LinkedHashMap<>(trace.facts());
+        payload.putIfAbsent("event", trace.decision());
+        payload.putIfAbsent("role", trace.stage());
+        String type = trace.decision().equals("model_execution")
+                ? "model_execution"
+                : trace.decision().contains("artifact")
+                        ? "artifact"
+                        : Set.of("critic", "cart").contains(trace.stage())
+                                ? "policy_gate" : "task";
+        emit(run, type, Map.copyOf(payload));
+    }
+
     private void emit(AgentRun run, String type, Map<String, Object> data) {
-        RunEvent event = appendInMemory(run, type, data);
-        RunRepository.Lease lease = activeLeases.get(run.getRunId());
-        if (lease == null) {
-            repository.appendEvent(run.getRunId(), event, run.getUpdatedAt());
-        } else {
-            repository.appendEventFenced(run.getRunId(), event, run.getUpdatedAt(), lease);
+        Object eventLock = eventLocks.computeIfAbsent(run.getRunId(), ignored -> new Object());
+        synchronized (eventLock) {
+            RunEvent event = appendInMemory(run, type, data);
+            RunRepository.Lease lease = activeLeases.get(run.getRunId());
+            if (lease == null) {
+                repository.appendEvent(run.getRunId(), event, run.getUpdatedAt());
+            } else {
+                repository.appendEventFenced(run.getRunId(), event, run.getUpdatedAt(), lease);
+            }
+            publish(run, event);
         }
-        publish(run, event);
     }
 
     private void executeConfirmation(AgentRun run) {
@@ -646,10 +674,14 @@ public class RunService {
         }
 
         DecisionResult refreshedResult = refreshConfirmedDecision(proposalResult, current);
+        Instant createdAt = Instant.now();
+        Instant maximumExpiresAt = createdAt.plus(Duration.ofMinutes(15));
+        Instant expiresAt = current.quoteExpiresAt().isBefore(maximumExpiresAt)
+                ? current.quoteExpiresAt() : maximumExpiresAt;
         AgentRun.CartDraftState draft = new AgentRun.CartDraftState(
                 UUID.randomUUID().toString(),
                 current.totalPrice(),
-                Instant.now().plus(executionProperties.proposalTtl()),
+                expiresAt,
                 false);
         run.prepareCartDraft(refreshedResult, draft);
         emit(run, "artifact", Map.of(
@@ -660,6 +692,8 @@ public class RunService {
                 "catalogVersion", current.catalogVersion(),
                 "pricingVersion", current.pricingVersion(),
                 "providerId", current.providerId(),
+                "quoteExpiresAt", current.quoteExpiresAt(),
+                "draftExpiresAt", draft.expiresAt(),
                 "totalPrice", current.totalPrice()));
         emit(run, "artifact", Map.of(
                 "event", "artifact_published",
@@ -757,33 +791,64 @@ public class RunService {
     }
 
     private void publish(AgentRun run, RunEvent event) {
-        subscribers.getOrDefault(run.getRunId(), new CopyOnWriteArrayList<>())
-                .forEach(emitter -> send(emitter, event));
+        String runId = run.getRunId();
+        if (!subscribers.containsKey(runId)) return;
+        Object eventLock = eventLocks.computeIfAbsent(runId, ignored -> new Object());
+        synchronized (eventLock) {
+            var active = subscribers.get(runId);
+            if (active != null) {
+                active.forEach(subscription -> send(runId, subscription, event));
+            }
+        }
     }
 
-    private void send(SseEmitter emitter, RunEvent event) {
+    private void send(String runId, Subscription subscription, RunEvent event) {
+        if (event.sequence() <= subscription.cursor().get()) return;
         try {
-            emitter.send(SseEmitter.event()
+            subscription.emitter().send(SseEmitter.event()
                     .id(Long.toString(event.sequence()))
                     .name(event.eventType())
                     .data(event));
+            subscription.cursor().set(event.sequence());
         } catch (IOException | IllegalStateException error) {
-            emitter.complete();
+            remove(runId, subscription);
+            subscription.emitter().complete();
         }
     }
 
     private void completeSubscribers(String runId) {
-        var emitters = subscribers.remove(runId);
-        if (emitters != null) emitters.forEach(SseEmitter::complete);
+        Object eventLock = eventLocks.computeIfAbsent(runId, ignored -> new Object());
+        synchronized (eventLock) {
+            var active = subscribers.remove(runId);
+            if (active != null) {
+                active.forEach(subscription -> subscription.emitter().complete());
+            }
+        }
+        eventLocks.remove(runId, eventLock);
     }
 
-    private void remove(String runId, SseEmitter emitter) {
-        var emitters = subscribers.get(runId);
-        if (emitters != null) emitters.remove(emitter);
+    private void remove(String runId, Subscription subscription) {
+        var active = subscribers.get(runId);
+        if (active == null) return;
+        active.remove(subscription);
+        if (active.isEmpty()) subscribers.remove(runId, active);
+    }
+
+    private boolean cancelled(AgentRun run, ExecutionControl control) {
+        return control.isCancellationRequested()
+                || run.isCancellationRequested()
+                || repository.isCancellationRequested(run.getRunId());
     }
 
     private static boolean isTerminal(String status) {
         return status.equals("completed") || status.equals("failed") || status.equals("cancelled");
+    }
+
+    private boolean isTerminalEvent(RunEvent event) {
+        if (Set.of("result", "run_failed", "run_cancelled").contains(event.eventType())) return true;
+        Object name = event.payload().get("event");
+        return Set.of("run_completed", "run_failed", "run_cancelled")
+                .contains(String.valueOf(name));
     }
 
     private boolean isQualified(AgentRun run) {
@@ -791,6 +856,10 @@ public class RunService {
     }
 
     private boolean qualified(com.buysense.domain.DecisionResult result) {
+        if (result.runtime() == null
+                || !"approved".equals(result.runtime().criticVerdict())) {
+            return false;
+        }
         if (result.slate().isEmpty()) return false;
         if (result.requirement().bundleRequested() && result.bundles().isEmpty()) return false;
         if (!result.requirement().sponsoredAllowed()
@@ -804,31 +873,6 @@ public class RunService {
         return result.slate().stream().limit(3)
                 .filter(com.buysense.domain.Candidate::sponsored)
                 .count() <= 1;
-    }
-
-    private void emitChannelResult(AgentRun run, com.buysense.domain.DecisionResult result,
-                                   String channel, String metricKey) {
-        Object value = result.metrics().getOrDefault(metricKey, 0);
-        int candidateCount = value instanceof Number number ? number.intValue() : 0;
-        emit(run, "task", Map.of(
-                "event", "data_plane_result",
-                "role", channel,
-                "channel", channel,
-                "candidateCount", candidateCount));
-    }
-
-    private void emitModelCall(AgentRun run, ModelPortAgentBridge.RoleCall call) {
-        if (!call.attempted()) return;
-        Map<String, Object> payload = new java.util.LinkedHashMap<>();
-        payload.put("event", "model_budget_consumed");
-        payload.put("role", call.role());
-        payload.put("model", modelPort.status().model());
-        payload.put("success", call.success());
-        payload.put("totalTokens", call.totalTokens());
-        payload.put("latencyMs", call.latencyMs());
-        payload.put("fallback", !call.success());
-        if (call.error() != null) payload.put("error", call.error());
-        emit(run, "model_execution", Map.copyOf(payload));
     }
 
     private void cache(AgentRun run) {
@@ -855,6 +899,30 @@ public class RunService {
             return overloaded;
         }
     }
+
+    private static final class ExecutionControl {
+        private final AtomicBoolean cancellationRequested = new AtomicBoolean();
+        private volatile FutureTask<Void> task;
+
+        synchronized void attach(FutureTask<Void> value) {
+            task = value;
+            if (cancellationRequested.get()) value.cancel(true);
+        }
+
+        void cancel() {
+            cancellationRequested.set(true);
+            FutureTask<Void> current = task;
+            if (current != null) current.cancel(true);
+        }
+
+        boolean isCancellationRequested() {
+            return cancellationRequested.get();
+        }
+    }
+
+    private record Subscription(SseEmitter emitter, AtomicLong cursor) {
+    }
+
     public static final class RunContractException extends RuntimeException {
         private final String code;
 

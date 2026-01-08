@@ -1,6 +1,7 @@
 package com.buysense.web;
 
 import com.buysense.retail.RetailDataGateway;
+import com.buysense.retail.ReviewEvidenceGateway;
 import com.buysense.run.RunService;
 import com.buysense.sar.data.JavaDataPlaneValidationException;
 import org.springframework.http.HttpHeaders;
@@ -52,6 +53,15 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
                 "error", error.code(),
                 "message", "retail data provider unavailable"));
+    }
+
+    @ExceptionHandler(ReviewEvidenceGateway.ProviderException.class)
+    ResponseEntity<Map<String, Object>> reviewProvider(
+            ReviewEvidenceGateway.ProviderException error
+    ) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
+                "error", error.code(),
+                "message", "review evidence provider unavailable"));
     }
 
     @ExceptionHandler(JavaDataPlaneValidationException.class)

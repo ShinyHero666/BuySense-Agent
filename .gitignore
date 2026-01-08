@@ -16,3 +16,5 @@ Thumbs.db
 target/
 **/target/
 /data/
+code/java-control-plane/src/test/resources/evaluation/private/
+code/java-control-plane/src/test/resources/evaluation/human/

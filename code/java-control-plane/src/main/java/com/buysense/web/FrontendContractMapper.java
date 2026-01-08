@@ -128,7 +128,12 @@ public class FrontendContractMapper {
                         modelRuntime.model(),
                         modelRuntime.modelCalls(),
                         modelRuntime.fallbackCount(),
-                        modelRuntime.totalTokens()));
+                        modelRuntime.totalTokens(),
+                        modelRuntime.provider(),
+                        modelRuntime.localOnly(),
+                        modelRuntime.proposalAccepted(),
+                        modelRuntime.proposalCorrected(),
+                        modelRuntime.roleExecutions()));
     }
 
     private BundleView bundle(DecisionResult result, double maxScore) {
@@ -346,7 +351,12 @@ public class FrontendContractMapper {
             String model,
             int modelCalls,
             int fallbackCount,
-            int totalTokens
+            int totalTokens,
+            String provider,
+            boolean localOnly,
+            int proposalAccepted,
+            int proposalCorrected,
+            List<DecisionResult.RoleExecution> roleExecutions
     ) {
     }
 }

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "goldSetId": "benchmark-partition-fixture-gold",
+  "taskSetId": "benchmark-partition-fixture-tasks",
+  "cases": [
+    {
+      "caseId": "fixture-budget-boundary",
+      "expected": {
+        "expectedVerdict": "approved",
+        "expectedBudget": 1000
+      },
+      "manualReviewRubrics": [
+        "The explanation must remain grounded in the supplied evidence."
+      ],
+      "judgeRubrics": [
+        {
+          "rubricId": "fixture-evidence",
+          "criterion": "The answer explains its evidence without inventing facts.",
+          "minimumScore": 4,
+          "enforcement": "BLOCKING",
+          "humanCalibrationRequired": true
+        }
+      ]
+    }
+  ]
+}

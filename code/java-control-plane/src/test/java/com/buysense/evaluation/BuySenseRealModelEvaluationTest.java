@@ -18,17 +18,17 @@ import org.springframework.test.context.DynamicPropertySource;
 @SpringBootTest
 @EnabledIfEnvironmentVariable(named = "BUYSENSE_REAL_MODEL_EVAL", matches = "true")
 class BuySenseRealModelEvaluationTest {
-    private static final String SUITE = "evaluation/buysense_seed_v1.json";
+    private static final String SUITE = "evaluation/buysense_catalog_v2.json";
     private static final Path REPORT_DIRECTORY = Path.of("target", "evaluation");
     private static final Set<String> SMOKE_CASES = new LinkedHashSet<>(List.of(
             "3c-bundle-7000-photo-no-ads",
+            "3c-bundle-5000-game",
+            "3c-bundle-8000-apple",
             "3c-phone-compare-no-ads",
-            "3c-bundle-3000-budget-floor",
             "3c-false-order-claim",
             "camp-bundle-900-high-altitude",
             "camp-bundle-400-too-low",
-            "camp-excluded-trailforge",
-            "camp-ad-optout-soft-conflict"));
+            "camp-ad-optout-organic-overlap"));
 
     @Autowired
     private SearchAdsRecsLeadService agent;
@@ -54,9 +54,9 @@ class BuySenseRealModelEvaluationTest {
         assertThat(selected).hasSize(SMOKE_CASES.size());
 
         EvaluationSuite smoke = new EvaluationSuite(
-                "1.0",
-                "buysense-real-model-smoke-v1",
-                "Representative live-model smoke suite derived from buysense-seed-v1.",
+                "2.0",
+                "buysense-real-model-smoke-v2",
+                "Representative live-model smoke suite derived from buysense-catalog-v2.",
                 seed.systemVersion() + "+" + required("BUYSENSE_MODELPORT_MODEL"),
                 selected);
         EvaluationReport report = new EvaluationHarness(
@@ -64,9 +64,9 @@ class BuySenseRealModelEvaluationTest {
                 new DeterministicEvaluationGrader()).run(smoke);
         EvaluationReportWriter writer = new EvaluationReportWriter(mapper);
         writer.writeJson(report, REPORT_DIRECTORY.resolve(
-                "buysense-real-model-smoke-v1-report.json"));
+                "buysense-real-model-smoke-v2-report.json"));
         writer.writeMarkdown(report, REPORT_DIRECTORY.resolve(
-                "buysense-real-model-smoke-v1-report.md"));
+                "buysense-real-model-smoke-v2-report.md"));
 
         assertThat(report.trials()).noneMatch(trial -> "execution_failed".equals(trial.verdict()));
         assertThat(report.aggregate().averageTokens()).isGreaterThan(0.0);

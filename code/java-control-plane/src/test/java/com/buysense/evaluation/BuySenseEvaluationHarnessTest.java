@@ -12,7 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
 class BuySenseEvaluationHarnessTest {
-    private static final String SUITE = "evaluation/buysense_seed_v1.json";
+    private static final String SUITE = "evaluation/buysense_catalog_v2.json";
     private static final Path REPORT_DIRECTORY = Path.of("target", "evaluation");
 
     @Autowired
@@ -30,12 +30,16 @@ class BuySenseEvaluationHarnessTest {
                 agent,
                 new DeterministicEvaluationGrader()).run(suite);
         EvaluationReportWriter writer = new EvaluationReportWriter(mapper);
-        writer.writeJson(report, REPORT_DIRECTORY.resolve("buysense-seed-v1-report.json"));
-        writer.writeMarkdown(report, REPORT_DIRECTORY.resolve("buysense-seed-v1-report.md"));
+        writer.writeJson(report, REPORT_DIRECTORY.resolve("buysense-catalog-v2-report.json"));
+        writer.writeMarkdown(report, REPORT_DIRECTORY.resolve("buysense-catalog-v2-report.md"));
 
         assertThat(report.aggregate().caseCount()).isEqualTo(suite.cases().size());
         assertThat(report.aggregate().trialCount()).isEqualTo(
                 suite.cases().stream().mapToInt(EvaluationCase::trials).sum());
+        assertThat(report.manualReviewQueue()).allSatisfy(review -> assertThat(report.trials())
+                .anyMatch(trial -> trial.caseId().equals(review.caseId())
+                        && trial.trialIndex() == 1
+                        && trial.passed()));
         assertThat(report.trials()).allSatisfy(trial -> {
             assertThat(trial.runId()).isNotBlank();
             assertThat(trial.assertions()).isNotEmpty();
@@ -49,9 +53,11 @@ class BuySenseEvaluationHarnessTest {
         assertThat(report.aggregate().redlinePassRate()).isEqualTo(1.0);
         assertThat(report.aggregate().taskSuccessRate()).isEqualTo(1.0);
         assertThat(report.status()).isEqualTo("MANUAL_REVIEW_REQUIRED");
-        assertThat(Files.readString(REPORT_DIRECTORY.resolve("buysense-seed-v1-report.md")))
+        assertThat(Files.readString(REPORT_DIRECTORY.resolve("buysense-catalog-v2-report.md")))
                 .contains("## Failure Attribution")
                 .contains("## Slice Results")
+                .contains("**Context:**")
+                .contains("machinePreconditions")
                 .contains("**Observed response:**")
                 .contains("**Decision:** `PENDING`");
     }

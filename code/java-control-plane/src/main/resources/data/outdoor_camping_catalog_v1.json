@@ -1,5 +1,5 @@
 {
-  "catalog_version": "outdoor-camping-snapshot-v1",
+  "catalog_version": "outdoor-camping-snapshot-v2",
   "quote_version": "camping-quote-snapshot-2026-08-01",
   "generated_at": "2026-08-01T00:00:00Z",
   "dataset_purpose": "offline-evaluation",
@@ -10,14 +10,26 @@
       "title": "TrailForge 高山防风炉",
       "category": "camp_stove",
       "brand": "TrailForge",
-      "tags": ["露营炉", "防风", "轻量", "高海拔", "en417"],
+      "tags": [
+        "露营炉",
+        "防风",
+        "轻量",
+        "高海拔",
+        "en417"
+      ],
       "skus": [
         {
           "sku_id": "sku-trailforge-alpine-stove",
           "title": "TrailForge 高山防风炉 标准版",
           "ecosystem": "universal",
-          "connectors": ["en417-thread", "pot-support-medium"],
-          "protocols": ["lindal-valve", "cookware-direct"],
+          "connectors": [
+            "en417-thread",
+            "pot-support-medium"
+          ],
+          "protocols": [
+            "lindal-valve",
+            "cookware-direct"
+          ],
           "offers": [
             {
               "offer_id": "offer-trailforge-alpine-stove-self",
@@ -30,6 +42,32 @@
             }
           ]
         }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "防风",
+          "statement": "环形挡风结构减少侧风对火焰的直接干扰，面向户外有风环境",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "高海拔",
+          "statement": "轻量炉体、EN417 螺纹与 Lindal 阀门组合适合高海拔徒步套装，但不含独立稳压阀",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "EN417 螺纹、Lindal 阀门和中型锅架分别约束气罐与锅具的兼容范围",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ],
+      "tradeoffs": [
+        "没有独立稳压阀，极低温和高海拔下的火力稳定性弱于稳压炉；只能在通风户外使用"
       ]
     },
     {
@@ -37,14 +75,25 @@
       "title": "EasyFlame 双人便携卡式炉",
       "category": "camp_stove",
       "brand": "EasyFlame",
-      "tags": ["卡式炉", "双人", "便携", "稳定"],
+      "tags": [
+        "卡式炉",
+        "双人",
+        "便携",
+        "稳定"
+      ],
       "skus": [
         {
           "sku_id": "sku-easyflame-cassette-stove",
           "title": "EasyFlame 双人便携卡式炉",
           "ecosystem": "universal",
-          "connectors": ["bayonet", "pot-support-wide"],
-          "protocols": ["butane-cassette", "cookware-direct"],
+          "connectors": [
+            "bayonet",
+            "pot-support-wide"
+          ],
+          "protocols": [
+            "butane-cassette",
+            "cookware-direct"
+          ],
           "offers": [
             {
               "offer_id": "offer-easyflame-cassette-stove-sponsored",
@@ -59,6 +108,32 @@
             }
           ]
         }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "双人",
+          "statement": "宽型锅架面向双人锅具和常规营地烹饪",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "便携",
+          "statement": "卡式结构安装简单，适合自驾与固定营地携带",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "卡口接口仅匹配 butane-cassette 卡式丁烷气罐，宽型锅架匹配对应锅具",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ],
+      "tradeoffs": [
+        "不属于徒步轻量或高海拔低温方案，卡式丁烷在低温环境下输出会明显下降"
       ]
     },
     {
@@ -66,14 +141,24 @@
       "title": "TrailForge EN417 四季高山气罐",
       "category": "fuel_canister",
       "brand": "TrailForge",
-      "tags": ["气罐", "高山气", "低温", "高海拔", "en417"],
+      "tags": [
+        "气罐",
+        "高山气",
+        "低温",
+        "高海拔",
+        "en417"
+      ],
       "skus": [
         {
           "sku_id": "sku-trailforge-four-season-gas",
           "title": "TrailForge EN417 四季高山气罐 230g",
           "ecosystem": "universal",
-          "connectors": ["en417-thread"],
-          "protocols": ["lindal-valve"],
+          "connectors": [
+            "en417-thread"
+          ],
+          "protocols": [
+            "lindal-valve"
+          ],
           "offers": [
             {
               "offer_id": "offer-trailforge-four-season-gas-sponsored",
@@ -88,6 +173,32 @@
             }
           ]
         }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "低温",
+          "statement": "四季混合气配方面向低温环境，输出稳定性高于常规丁烷",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "高海拔",
+          "statement": "EN417 螺纹和 Lindal 自封阀适配对应高山炉具",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "兼容",
+          "statement": "只能与 EN417 螺纹、Lindal 阀门炉具直接连接，不能用于卡式炉",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ],
+      "tradeoffs": [
+        "低温仍会降低罐内压力；连接前必须检查阀门密封，并且只能在通风户外使用"
       ]
     },
     {
@@ -95,14 +206,23 @@
       "title": "EasyFlame 卡式炉丁烷气罐",
       "category": "fuel_canister",
       "brand": "EasyFlame",
-      "tags": ["气罐", "卡式气", "便携", "双人"],
+      "tags": [
+        "气罐",
+        "卡式气",
+        "便携",
+        "双人"
+      ],
       "skus": [
         {
           "sku_id": "sku-easyflame-butane-cassette",
           "title": "EasyFlame 卡式炉丁烷气罐 220g",
           "ecosystem": "universal",
-          "connectors": ["bayonet"],
-          "protocols": ["butane-cassette"],
+          "connectors": [
+            "bayonet"
+          ],
+          "protocols": [
+            "butane-cassette"
+          ],
           "offers": [
             {
               "offer_id": "offer-easyflame-butane-cassette-self",
@@ -115,6 +235,32 @@
             }
           ]
         }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "易用",
+          "statement": "卡口结构安装步骤简单，适配 butane-cassette 卡式炉",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "便携",
+          "statement": "220g 规格面向常温营地与自驾携带",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "卡口接口不兼容 EN417 螺纹炉具",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ],
+      "tradeoffs": [
+        "常规丁烷不适合作为严寒或高海拔环境首选；只能在通风户外使用"
       ]
     },
     {
@@ -122,14 +268,24 @@
       "title": "RidgeCook 轻量钛锅 1.2L",
       "category": "cookware",
       "brand": "RidgeCook",
-      "tags": ["钛锅", "锅具", "轻量", "高海拔", "易清洁"],
+      "tags": [
+        "钛锅",
+        "锅具",
+        "轻量",
+        "高海拔",
+        "易清洁"
+      ],
       "skus": [
         {
           "sku_id": "sku-ridgecook-titanium-pot",
           "title": "RidgeCook 轻量钛锅 1.2L",
           "ecosystem": "universal",
-          "connectors": ["pot-support-medium"],
-          "protocols": ["cookware-direct"],
+          "connectors": [
+            "pot-support-medium"
+          ],
+          "protocols": [
+            "cookware-direct"
+          ],
           "offers": [
             {
               "offer_id": "offer-ridgecook-titanium-pot-self",
@@ -142,6 +298,32 @@
             }
           ]
         }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "轻量",
+          "statement": "1.2L 钛锅以降低背负重量为主要取向，适合单人徒步",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "高海拔",
+          "statement": "中型锅底与 pot-support-medium 锅架匹配，可组成高海拔轻量套装",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "仅在中型锅架和直连锅具规范下判定为兼容",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ],
+      "tradeoffs": [
+        "1.2L 容量更偏单人；薄壁导热快，需要避免持续大火干烧"
       ]
     },
     {
@@ -149,14 +331,24 @@
       "title": "CampNova 双人露营套锅 2.5L",
       "category": "cookware",
       "brand": "CampNova",
-      "tags": ["套锅", "锅具", "双人", "稳定", "易清洁"],
+      "tags": [
+        "套锅",
+        "锅具",
+        "双人",
+        "稳定",
+        "易清洁"
+      ],
       "skus": [
         {
           "sku_id": "sku-campnova-family-cookset",
           "title": "CampNova 双人露营套锅 2.5L",
           "ecosystem": "universal",
-          "connectors": ["pot-support-wide"],
-          "protocols": ["cookware-direct"],
+          "connectors": [
+            "pot-support-wide"
+          ],
+          "protocols": [
+            "cookware-direct"
+          ],
           "offers": [
             {
               "offer_id": "offer-campnova-family-cookset-sponsored",
@@ -171,6 +363,32 @@
             }
           ]
         }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "双人",
+          "statement": "2.5L 容量和套锅组合面向双人营地餐",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "稳定",
+          "statement": "宽底结构与 pot-support-wide 锅架匹配，降低双人烹饪时的倾覆风险",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "仅在宽型锅架和直连锅具规范下判定为兼容",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ],
+      "tradeoffs": [
+        "容量和稳定性优先，体积与重量高于单人轻量锅具，不适合极简徒步"
       ]
     },
     {
@@ -178,171 +396,406 @@
       "title": "SummitFlow 高山稳压防风炉",
       "category": "camp_stove",
       "brand": "SummitFlow",
-      "tags": ["露营炉", "稳压", "防风", "低温", "高海拔", "轻量", "en417"],
+      "tags": [
+        "露营炉",
+        "稳压",
+        "防风",
+        "低温",
+        "高海拔",
+        "轻量",
+        "en417"
+      ],
       "decision_facts": [
         "稳压阀用于降低罐内压力变化对火力的影响，适合高海拔和低温场景",
         "内收式防风炉盘减少侧风对火焰的干扰",
         "EN417 螺纹与 Lindal 阀门对应主流螺纹气罐"
       ],
-      "tradeoffs": ["高海拔仍需根据气温和风力调整火力，禁止在帐篷等密闭空间使用"],
-      "skus": [{
-        "sku_id": "sku-summitflow-regulator-stove",
-        "title": "SummitFlow 高山稳压防风炉",
-        "ecosystem": "universal",
-        "connectors": ["en417-thread", "pot-support-medium"],
-        "protocols": ["lindal-valve", "cookware-direct"],
-        "offers": [{
-          "offer_id": "offer-summitflow-regulator-stove-self",
-          "seller_id": "buysense-outdoor-benchmark",
-          "price": 529,
-          "currency": "CNY",
-          "stock": 34,
-          "sponsored": false,
-          "valid_until": "2099-01-01T00:00:00Z"
-        }]
-      }]
+      "tradeoffs": [
+        "高海拔仍需根据气温和风力调整火力，禁止在帐篷等密闭空间使用"
+      ],
+      "skus": [
+        {
+          "sku_id": "sku-summitflow-regulator-stove",
+          "title": "SummitFlow 高山稳压防风炉",
+          "ecosystem": "universal",
+          "connectors": [
+            "en417-thread",
+            "pot-support-medium"
+          ],
+          "protocols": [
+            "lindal-valve",
+            "cookware-direct"
+          ],
+          "offers": [
+            {
+              "offer_id": "offer-summitflow-regulator-stove-self",
+              "seller_id": "buysense-outdoor-benchmark",
+              "price": 529,
+              "currency": "CNY",
+              "stock": 34,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "高海拔",
+          "statement": "稳压阀用于降低罐内压力变化对火力的影响，适合高海拔和低温场景",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "防风",
+          "statement": "内收式防风炉盘减少侧风对火焰的干扰",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "兼容",
+          "statement": "EN417 螺纹、Lindal 阀门和中型锅架分别约束气罐与锅具的兼容范围",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ]
     },
     {
       "spu_id": "spu-ridgewind-trek-stove",
       "title": "RidgeWind Trek 轻量防风炉",
       "category": "camp_stove",
       "brand": "RidgeWind",
-      "tags": ["露营炉", "防风", "轻量", "徒步", "en417"],
+      "tags": [
+        "露营炉",
+        "防风",
+        "轻量",
+        "徒步",
+        "en417"
+      ],
       "decision_facts": [
         "折叠炉架和环形挡风结构面向徒步轻量使用",
         "EN417 螺纹与 Lindal 阀门可连接对应螺纹气罐"
       ],
-      "tradeoffs": ["没有独立稳压阀，极低温和高海拔火力稳定性弱于稳压型号"],
-      "skus": [{
-        "sku_id": "sku-ridgewind-trek-stove",
-        "title": "RidgeWind Trek 轻量防风炉",
-        "ecosystem": "universal",
-        "connectors": ["en417-thread", "pot-support-medium"],
-        "protocols": ["lindal-valve", "cookware-direct"],
-        "offers": [{
-          "offer_id": "offer-ridgewind-trek-stove-self",
-          "seller_id": "buysense-outdoor-benchmark",
-          "price": 419,
-          "currency": "CNY",
-          "stock": 47,
-          "sponsored": false,
-          "valid_until": "2099-01-01T00:00:00Z"
-        }]
-      }]
+      "tradeoffs": [
+        "没有独立稳压阀，极低温和高海拔火力稳定性弱于稳压型号"
+      ],
+      "skus": [
+        {
+          "sku_id": "sku-ridgewind-trek-stove",
+          "title": "RidgeWind Trek 轻量防风炉",
+          "ecosystem": "universal",
+          "connectors": [
+            "en417-thread",
+            "pot-support-medium"
+          ],
+          "protocols": [
+            "lindal-valve",
+            "cookware-direct"
+          ],
+          "offers": [
+            {
+              "offer_id": "offer-ridgewind-trek-stove-self",
+              "seller_id": "buysense-outdoor-benchmark",
+              "price": 419,
+              "currency": "CNY",
+              "stock": 47,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "轻量",
+          "statement": "折叠炉架面向徒步轻量使用",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "防风",
+          "statement": "环形挡风结构降低常规侧风对火焰的干扰",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "EN417 螺纹、Lindal 阀门和中型锅架分别约束气罐与锅具的兼容范围",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ]
     },
     {
       "spu_id": "spu-summitfuel-four-season",
       "title": "SummitFuel EN417 四季混合气罐",
       "category": "fuel_canister",
       "brand": "SummitFuel",
-      "tags": ["气罐", "四季气", "低温", "高海拔", "en417"],
+      "tags": [
+        "气罐",
+        "四季气",
+        "低温",
+        "高海拔",
+        "en417"
+      ],
       "decision_facts": [
         "异丁烷与丙烷混合配方比常规丁烷更适合低温环境",
         "EN417 螺纹和 Lindal 自封阀与对应高山炉具匹配"
       ],
-      "tradeoffs": ["低温会降低所有气罐输出，使用前必须检查密封且只能在通风户外使用"],
-      "skus": [{
-        "sku_id": "sku-summitfuel-four-season-230",
-        "title": "SummitFuel EN417 四季混合气罐 230g",
-        "ecosystem": "universal",
-        "connectors": ["en417-thread"],
-        "protocols": ["lindal-valve"],
-        "offers": [{
-          "offer_id": "offer-summitfuel-four-season-self",
-          "seller_id": "buysense-outdoor-benchmark",
-          "price": 69,
-          "currency": "CNY",
-          "stock": 150,
-          "sponsored": false,
-          "valid_until": "2099-01-01T00:00:00Z"
-        }]
-      }]
+      "tradeoffs": [
+        "低温会降低所有气罐输出，使用前必须检查密封且只能在通风户外使用"
+      ],
+      "skus": [
+        {
+          "sku_id": "sku-summitfuel-four-season-230",
+          "title": "SummitFuel EN417 四季混合气罐 230g",
+          "ecosystem": "universal",
+          "connectors": [
+            "en417-thread"
+          ],
+          "protocols": [
+            "lindal-valve"
+          ],
+          "offers": [
+            {
+              "offer_id": "offer-summitfuel-four-season-self",
+              "seller_id": "buysense-outdoor-benchmark",
+              "price": 69,
+              "currency": "CNY",
+              "stock": 150,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "低温",
+          "statement": "异丁烷与丙烷混合配方比常规丁烷更适合低温环境",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "高海拔",
+          "statement": "四季混合气配方与对应稳压炉具组合，面向高海拔场景",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "EN417 螺纹和 Lindal 自封阀与对应高山炉具匹配",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ]
     },
     {
       "spu_id": "spu-ridgetrek-standard-gas",
       "title": "RidgeTrek EN417 标准气罐",
       "category": "fuel_canister",
       "brand": "RidgeTrek",
-      "tags": ["气罐", "常温", "徒步", "en417"],
+      "tags": [
+        "气罐",
+        "常温",
+        "徒步",
+        "en417"
+      ],
       "decision_facts": [
         "EN417 螺纹和 Lindal 自封阀兼容对应螺纹炉具",
         "常温营地使用成本较低"
       ],
-      "tradeoffs": ["常规配方不作为严寒和高海拔环境的首选"],
-      "skus": [{
-        "sku_id": "sku-ridgetrek-standard-gas-230",
-        "title": "RidgeTrek EN417 标准气罐 230g",
-        "ecosystem": "universal",
-        "connectors": ["en417-thread"],
-        "protocols": ["lindal-valve"],
-        "offers": [{
-          "offer_id": "offer-ridgetrek-standard-gas-self",
-          "seller_id": "buysense-outdoor-benchmark",
-          "price": 39,
-          "currency": "CNY",
-          "stock": 182,
-          "sponsored": false,
-          "valid_until": "2099-01-01T00:00:00Z"
-        }]
-      }]
+      "tradeoffs": [
+        "常规配方不作为严寒和高海拔环境的首选"
+      ],
+      "skus": [
+        {
+          "sku_id": "sku-ridgetrek-standard-gas-230",
+          "title": "RidgeTrek EN417 标准气罐 230g",
+          "ecosystem": "universal",
+          "connectors": [
+            "en417-thread"
+          ],
+          "protocols": [
+            "lindal-valve"
+          ],
+          "offers": [
+            {
+              "offer_id": "offer-ridgetrek-standard-gas-self",
+              "seller_id": "buysense-outdoor-benchmark",
+              "price": 39,
+              "currency": "CNY",
+              "stock": 182,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "兼容",
+          "statement": "EN417 螺纹和 Lindal 自封阀兼容对应螺纹炉具",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "性价比",
+          "statement": "常温营地使用成本低于四季混合气罐",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        }
+      ]
     },
     {
       "spu_id": "spu-alpinecook-titanium-pot",
       "title": "AlpineCook 钛锅 1.5L",
       "category": "cookware",
       "brand": "AlpineCook",
-      "tags": ["钛锅", "锅具", "轻量", "高海拔", "徒步", "易清洁"],
+      "tags": [
+        "钛锅",
+        "锅具",
+        "轻量",
+        "高海拔",
+        "徒步",
+        "易清洁"
+      ],
       "decision_facts": [
         "1.5L 容量覆盖单人或双人轻量餐食",
         "中型锅底与 pot-support-medium 锅架匹配",
         "钛材质减轻背负重量，适合高海拔徒步"
       ],
-      "tradeoffs": ["薄壁导热快，烹饪时需要避免长时间大火干烧"],
-      "skus": [{
-        "sku_id": "sku-alpinecook-titanium-pot-15",
-        "title": "AlpineCook 钛锅 1.5L",
-        "ecosystem": "universal",
-        "connectors": ["pot-support-medium"],
-        "protocols": ["cookware-direct"],
-        "offers": [{
-          "offer_id": "offer-alpinecook-titanium-pot-self",
-          "seller_id": "buysense-outdoor-benchmark",
-          "price": 279,
-          "currency": "CNY",
-          "stock": 61,
-          "sponsored": false,
-          "valid_until": "2099-01-01T00:00:00Z"
-        }]
-      }]
+      "tradeoffs": [
+        "薄壁导热快，烹饪时需要避免长时间大火干烧"
+      ],
+      "skus": [
+        {
+          "sku_id": "sku-alpinecook-titanium-pot-15",
+          "title": "AlpineCook 钛锅 1.5L",
+          "ecosystem": "universal",
+          "connectors": [
+            "pot-support-medium"
+          ],
+          "protocols": [
+            "cookware-direct"
+          ],
+          "offers": [
+            {
+              "offer_id": "offer-alpinecook-titanium-pot-self",
+              "seller_id": "buysense-outdoor-benchmark",
+              "price": 279,
+              "currency": "CNY",
+              "stock": 61,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "高海拔",
+          "statement": "钛材质减轻背负重量，中型锅底适合高海拔徒步套装",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "双人",
+          "statement": "1.5L 容量覆盖单人或双人轻量餐食",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "中型锅底与 pot-support-medium 锅架匹配",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ]
     },
     {
       "spu_id": "spu-duotitan-cookset",
       "title": "DuoTitan 双人钛套锅 1.8L",
       "category": "cookware",
       "brand": "DuoTitan",
-      "tags": ["钛锅", "套锅", "双人", "轻量", "高海拔"],
+      "tags": [
+        "钛锅",
+        "套锅",
+        "双人",
+        "轻量",
+        "高海拔"
+      ],
       "decision_facts": [
         "1.8L 主锅和副锅适合双人轻量餐食",
         "中型锅底与 pot-support-medium 锅架匹配",
         "可套叠收纳气罐以减少背包空间"
       ],
-      "tradeoffs": ["容量高于单人需求，价格和体积也相应增加"],
-      "skus": [{
-        "sku_id": "sku-duotitan-cookset-18",
-        "title": "DuoTitan 双人钛套锅 1.8L",
-        "ecosystem": "universal",
-        "connectors": ["pot-support-medium"],
-        "protocols": ["cookware-direct"],
-        "offers": [{
-          "offer_id": "offer-duotitan-cookset-self",
-          "seller_id": "buysense-outdoor-benchmark",
-          "price": 319,
-          "currency": "CNY",
-          "stock": 39,
-          "sponsored": false,
-          "valid_until": "2099-01-01T00:00:00Z"
-        }]
-      }]
+      "tradeoffs": [
+        "容量高于单人需求，价格和体积也相应增加"
+      ],
+      "skus": [
+        {
+          "sku_id": "sku-duotitan-cookset-18",
+          "title": "DuoTitan 双人钛套锅 1.8L",
+          "ecosystem": "universal",
+          "connectors": [
+            "pot-support-medium"
+          ],
+          "protocols": [
+            "cookware-direct"
+          ],
+          "offers": [
+            {
+              "offer_id": "offer-duotitan-cookset-self",
+              "seller_id": "buysense-outdoor-benchmark",
+              "price": 319,
+              "currency": "CNY",
+              "stock": 39,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ],
+      "decision_evidence": [
+        {
+          "dimension": "双人",
+          "statement": "1.8L 主锅和副锅适合双人轻量餐食",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        },
+        {
+          "dimension": "便携",
+          "statement": "套叠结构可收纳气罐，减少背包空间占用",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 0.95
+        },
+        {
+          "dimension": "兼容",
+          "statement": "中型锅底与 pot-support-medium 锅架匹配",
+          "source_type": "catalog_snapshot",
+          "source_ref": "outdoor-camping-snapshot-v2",
+          "confidence": 1.0
+        }
+      ]
     }
-  ]
+  ],
+  "evidence_contract_version": "decision-evidence-v1",
+  "evidence_source_policy": "商品能力来自版本化离线合成目录；评论口碑由独立评论聚合快照提供；报价与库存由报价字段提供并在确认购买前刷新。"
 }

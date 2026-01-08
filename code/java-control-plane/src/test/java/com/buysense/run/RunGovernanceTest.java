@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -53,6 +54,11 @@ class RunGovernanceTest {
         assertThat(repository.findById(run.getRunId()).orElseThrow().getEvents())
                 .extracting(RunEvent::eventId)
                 .containsExactly(event.eventId());
+        assertThat(repository.listEventsAfter(run.getRunId(), 0))
+                .extracting(RunEvent::sequence)
+                .containsExactly(1L);
+        assertThat(repository.listEventsAfter(run.getRunId(), 1))
+                .isEmpty();
     }
 
     @Test
@@ -211,6 +217,38 @@ class RunGovernanceTest {
                 .isInstanceOf(RunService.RunCapacityException.class)
                 .extracting(error -> ((RunService.RunCapacityException) error).code())
                 .isEqualTo("identity_concurrency_limit");
+    }
+
+    @Test
+    void marksOnlyAnExpiredRunningRunAsResumed() {
+        AgentRun queued = run("queued-start");
+        repository.insert(queued, null);
+        ReflectionTestUtils.invokeMethod(runs, "execute", queued);
+
+        AgentRun completedQueued = repository.findById(queued.getRunId()).orElseThrow();
+        assertThat(completedQueued.getEvents().stream()
+                .filter(event -> event.eventType().equals("run_started"))
+                .map(event -> event.payload().get("resumed")))
+                .containsExactly(false);
+
+        AgentRun interrupted = run("interrupted-start");
+        repository.insert(interrupted, null);
+        Instant expiredAt = Instant.now().minusSeconds(60);
+        repository.acquireLease(
+                interrupted.getRunId(),
+                "expired-worker",
+                expiredAt.minusSeconds(30),
+                expiredAt).orElseThrow();
+        AgentRun restoredRunning = repository.findById(interrupted.getRunId()).orElseThrow();
+        assertThat(restoredRunning.getStatus()).isEqualTo("running");
+
+        ReflectionTestUtils.invokeMethod(runs, "execute", restoredRunning);
+
+        AgentRun completedRecovered = repository.findById(interrupted.getRunId()).orElseThrow();
+        assertThat(completedRecovered.getEvents().stream()
+                .filter(event -> event.eventType().equals("run_started"))
+                .map(event -> event.payload().get("resumed")))
+                .containsExactly(true);
     }
 
     private static AgentRun run(String prefix) {

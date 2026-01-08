@@ -25,10 +25,18 @@ public record Product(
         String currency,
         String catalogVersion,
         String quoteVersion,
-        String quoteValidUntil
+        String quoteValidUntil,
+        List<String> connectors,
+        List<String> protocols,
+        Integer maxPowerWatts
 ) {
     public Product {
         tags = List.copyOf(tags);
+        connectors = connectors == null ? List.of() : List.copyOf(connectors);
+        protocols = protocols == null ? List.of() : List.copyOf(protocols);
+        if (maxPowerWatts != null && maxPowerWatts < 0) {
+            throw new IllegalArgumentException("maxPowerWatts must be non-negative");
+        }
         if (source == null || source.isBlank()) {
             stock = stock <= 0 ? 99 : stock;
             source = "local_snapshot";
@@ -63,7 +71,8 @@ public record Product(
     ) {
         this(id, name, category, brand, price, tags, qualityScore, popularityScore,
                 sponsored, bidScore, compatibilityGroup, stock, source, sourceVersion, providerId,
-                skuPart(id), skuPart(id), offerPart(id), "CNY", sourceVersion, sourceVersion, "");
+                skuPart(id), skuPart(id), offerPart(id), "CNY", sourceVersion, sourceVersion, "",
+                List.of(), List.of(), null);
     }
 
     public Product(

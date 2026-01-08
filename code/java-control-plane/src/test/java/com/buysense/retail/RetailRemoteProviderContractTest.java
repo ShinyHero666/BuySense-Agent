@@ -17,6 +17,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
@@ -85,11 +86,35 @@ class RetailRemoteProviderContractTest {
             assertThat(refreshed.items()).hasSize(1)
                     .allSatisfy(product -> assertThat(product.source()).isEqualTo("remote_provider"));
             assertThat(refreshed.totalPrice()).isGreaterThan(proposed.price());
+            assertThat(refreshed.quoteExpiresAt()).isAfter(Instant.now());
             assertThat(requests).hasSize(6);
         } finally {
             server.stop(0);
         }
     }
+    @Test
+    void confirmationRejectsAnExpiredRemoteQuote() throws Exception {
+        List<String> requests = new CopyOnWriteArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        String providerId = providerId(baseUrl);
+        server.createContext("/", exchange -> serveRemote(
+                exchange, providerId, requests, "expired_quote"));
+        server.start();
+        try {
+            RetailDataGateway gateway = gateway(baseUrl, false);
+            var proposed = gateway.load("normal-3c-v1").products().get(0);
+
+            assertThatThrownBy(() -> gateway.revalidateSelection(
+                    "normal-3c-v1", List.of(proposed)))
+                    .isInstanceOf(RetailDataGateway.ProviderException.class)
+                    .extracting(error -> ((RetailDataGateway.ProviderException) error).code())
+                    .isEqualTo("proposal_quote_expired");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     void rejectsDuplicateJsonKeysBeforeTrustingProviderMetadata() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -207,6 +232,10 @@ class RetailRemoteProviderContractTest {
                     });
                 }
             }
+            if (mutation.equals("expired_quote")) {
+                response.path("quotes").forEach(value ->
+                        ((ObjectNode) value).put("valid_until", Instant.EPOCH.toString()));
+            }
             send(exchange, 200, response);
             return;
         }
@@ -261,6 +290,7 @@ class RetailRemoteProviderContractTest {
             quote.put("status", "active");
             quote.put("amount", offer.path("price").decimalValue());
             quote.put("stock", offer.path("stock").asInt());
+            quote.put("valid_until", Instant.now().plusSeconds(5 * 60).toString());
         }
         return response;
     }

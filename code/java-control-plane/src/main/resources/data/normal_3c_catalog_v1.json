@@ -1,8 +1,10 @@
 {
-  "catalog_version": "normal-3c-snapshot-v1",
+  "catalog_version": "normal-3c-snapshot-v2",
   "quote_version": "quote-snapshot-2026-08-01",
   "generated_at": "2026-08-01T00:00:00Z",
   "dataset_purpose": "offline-evaluation",
+  "evidence_contract_version": "decision-evidence-v1",
+  "evidence_source_policy": "离线规格事实来自版本化目录样例；生产环境由商品中心或 Provider 同步，评论证据由独立评论聚合服务生成。",
   "calibration_note": "接口和场景字段参考主流产品规格设计；新增品牌、型号、价格与评价均为离线合成样本。",
   "spus": [
     {
@@ -11,6 +13,11 @@
       "category": "phone",
       "brand": "Apple",
       "tags": ["手机", "拍照", "续航", "轻便", "usb-c"],
+      "decision_evidence": [
+        {"dimension": "拍照", "statement": "离线规格样例记录主摄光学防抖与 4K 视频能力，覆盖日常拍照和视频记录", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "离线规格样例记录 27W USB-PD 补能，续航表现需结合评论聚合快照判断", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 0.9}
+      ],
+      "tradeoffs": ["27W 补能速度低于高功率快充机型，重度录像场景的续航评价存在分化"],
       "skus": [
         {
           "sku_id": "sku-iphone-15-128-blue",
@@ -58,6 +65,13 @@
       "category": "phone",
       "brand": "Xiaomi",
       "tags": ["手机", "拍照", "游戏", "续航", "快充"],
+      "decision_evidence": [
+        {"dimension": "拍照", "statement": "离线规格样例记录主摄光学防抖、人像与夜景处理能力", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "离线规格样例记录日常续航配置与 90W 快充组合", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 0.95},
+        {"dimension": "游戏", "statement": "离线规格样例记录高性能模式，适合中高负载游戏场景", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 0.9},
+        {"dimension": "快充", "statement": "目录明确记录最大 90W 输出并支持 USB-PD、PPS 与小米快充协议", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
+      "tradeoffs": ["90W 峰值依赖适配协议，跨品牌设备的实际充电功率可能下降"],
       "skus": [
         {
           "sku_id": "sku-xiaomi-14-256-black",
@@ -88,6 +102,12 @@
       "category": "phone",
       "brand": "HONOR",
       "tags": ["手机", "人像", "拍照", "续航", "快充"],
+      "decision_evidence": [
+        {"dimension": "拍照", "statement": "离线规格样例记录人像优化与光学防抖，主要面向人物拍摄", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "离线规格样例记录均衡续航配置与 66W 快充组合", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 0.95},
+        {"dimension": "快充", "statement": "目录明确记录最大 66W 输出并支持 USB-PD 与 PPS", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
+      "tradeoffs": ["影像能力偏人像取向，长焦和重载游戏散热不是主要优势"],
       "skus": [
         {
           "sku_id": "sku-honor-200-256-green",
@@ -116,6 +136,11 @@
       "category": "headphones",
       "brand": "Apple",
       "tags": ["耳机", "通勤", "降噪", "音质", "ios"],
+      "decision_evidence": [
+        {"dimension": "降噪", "statement": "离线规格样例记录主动降噪与通透模式，面向通勤场景", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "连接", "statement": "目录记录蓝牙 AAC 与 iOS 生态连接能力", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
+      "tradeoffs": ["完整生态能力更依赖 iOS 设备，佩戴体验受个人耳型影响"],
       "skus": [
         {
           "sku_id": "sku-airpods-pro-2-usbc",
@@ -143,6 +168,11 @@
       "category": "headphones",
       "brand": "Soundcore",
       "tags": ["耳机", "通勤", "降噪", "音质", "性价比"],
+      "decision_evidence": [
+        {"dimension": "降噪", "statement": "离线规格样例记录通勤主动降噪与通透模式", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "音质", "statement": "目录记录 AAC 与 LDAC 编解码支持，兼顾通用连接和高码率音频", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
+      "tradeoffs": ["极端噪声下的降噪和通话稳定性不按旗舰耳机标准承诺"],
       "skus": [
         {
           "sku_id": "sku-soundcore-liberty-black",
@@ -170,6 +200,11 @@
       "category": "headphones",
       "brand": "Xiaomi",
       "tags": ["耳机", "通勤", "降噪", "android"],
+      "decision_evidence": [
+        {"dimension": "降噪", "statement": "离线规格样例记录主动降噪，面向安卓通勤场景", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "连接", "statement": "目录记录 AAC 与 LDAC 协议，支持通用蓝牙连接", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
+      "tradeoffs": ["跨品牌设备上的弹窗、空间音频等生态功能可能受限"],
       "skus": [
         {
           "sku_id": "sku-xiaomi-buds-white",
@@ -199,6 +234,11 @@
       "category": "charger",
       "brand": "Apple",
       "tags": ["充电器", "usb-c", "快充", "便携"],
+      "decision_evidence": [
+        {"dimension": "快充", "statement": "目录明确记录 20W 最大输出与 USB-PD 协议", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "便携", "statement": "离线规格样例记录单口小体积设计，适合随身携带", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 0.95}
+      ],
+      "tradeoffs": ["单口 20W 不适合多设备同时补能或高功率笔记本"],
       "skus": [
         {
           "sku_id": "sku-apple-charger-20w",
@@ -227,6 +267,11 @@
       "category": "charger",
       "brand": "UGREEN",
       "tags": ["充电器", "usb-c", "快充", "多口", "便携"],
+      "decision_evidence": [
+        {"dimension": "快充", "statement": "目录明确记录 65W 最大输出，并支持 USB-PD 与 PPS", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "多设备", "statement": "离线规格样例记录多口氮化镓设计，面向多设备出行", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 0.95}
+      ],
+      "tradeoffs": ["多口同时使用会分配功率，持续高负载存在发热反馈"],
       "skus": [
         {
           "sku_id": "sku-ugreen-gan-65w",
@@ -257,6 +302,11 @@
       "category": "charger",
       "brand": "Xiaomi",
       "tags": ["充电器", "usb-c", "快充", "90w"],
+      "decision_evidence": [
+        {"dimension": "快充", "statement": "目录明确记录 90W 最大输出，并支持 USB-PD、PPS 与小米快充协议", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "兼容", "statement": "USB-PD 与 PPS 提供通用兼容，小米协议用于同品牌峰值快充", "source_type": "platform_derived", "source_ref": "compatibility-policy-v1", "confidence": 0.95}
+      ],
+      "tradeoffs": ["90W 峰值依赖同品牌协议，跨品牌设备通常无法达到标称峰值"],
       "skus": [
         {
           "sku_id": "sku-xiaomi-charger-90w",
@@ -285,6 +335,10 @@
       "category": "charger",
       "brand": "Other",
       "tags": ["相机", "专用电池"],
+      "decision_evidence": [
+        {"dimension": "专用性", "statement": "目录明确记录 proprietary 接口与 camera-battery 协议，只适配指定相机电池", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
+      "tradeoffs": ["不支持 USB-C 手机充电，不能作为手机套装的通用充电器"],
       "skus": [
         {
           "sku_id": "sku-camera-charger-sponsored",
@@ -320,6 +374,11 @@
         "4K 视频防抖和 512GB 存储适合持续内容创作",
         "5200mAh 电池与 65W USB-PD 快充兼顾外拍续航"
       ],
+      "decision_evidence": [
+        {"dimension": "拍照", "statement": "5000 万像素主摄、光学防抖和 3 倍长焦覆盖人像、夜景与旅行构图", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "视频", "statement": "4K 视频防抖和 512GB 存储适合持续内容创作", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "5200mAh 电池与 65W USB-PD 快充兼顾外拍续航", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
       "tradeoffs": ["机身偏重，价格主要投入在影像和存储能力"],
       "skus": [{
         "sku_id": "sku-nova-creator-ultra-512-black",
@@ -349,6 +408,10 @@
         "人像焦段、光学防抖和肤色优化面向人物拍摄",
         "夜景多帧合成适合室内与城市夜景",
         "4800mAh 电池与 80W 快充适合日常高频拍摄"
+      ],
+      "decision_evidence": [
+        {"dimension": "拍照", "statement": "人像焦段、光学防抖和肤色优化面向人物拍摄，夜景多帧合成覆盖室内场景", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "4800mAh 电池与 80W 快充适合日常高频拍摄", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
       ],
       "tradeoffs": ["长焦覆盖弱于影像旗舰，不强调重载游戏散热"],
       "skus": [{
@@ -380,6 +443,11 @@
         "高亮屏和 5300mAh 电池适合户外取景",
         "USB-PD 与 PPS 协议便于复用旅行充电器"
       ],
+      "decision_evidence": [
+        {"dimension": "拍照", "statement": "5 倍潜望长焦和光学防抖面向远景、舞台与旅行拍摄", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "高亮屏和 5300mAh 电池适合户外取景", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "快充", "statement": "USB-PD 与 PPS 协议便于复用旅行充电器", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
       "tradeoffs": ["长焦模组使机身更厚，近距离人像不如专门人像机型自然"],
       "skus": [{
         "sku_id": "sku-atlas-zoom-pro-512-blue",
@@ -410,6 +478,11 @@
         "IP68 防护和强化中框降低户外使用顾虑",
         "66W USB-PD 快充兼顾通用性"
       ],
+      "decision_evidence": [
+        {"dimension": "续航", "statement": "6500mAh 电池和低功耗屏幕面向长续航与差旅场景", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "耐用", "statement": "IP68 防护和强化中框降低户外使用顾虑", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "快充", "statement": "66W USB-PD 快充兼顾通用性", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
       "tradeoffs": ["影像以记录为主，机身重量高于轻薄机型"],
       "skus": [{
         "sku_id": "sku-endura-max-256-green",
@@ -439,6 +512,11 @@
         "主动散热、高刷新率屏幕和触控优化面向长时间游戏",
         "旁路供电减少边充边玩时的电池发热",
         "80W 快充缩短游戏间隙补能时间"
+      ],
+      "decision_evidence": [
+        {"dimension": "游戏", "statement": "主动散热、高刷新率屏幕和触控优化面向长时间游戏", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "旁路供电减少边充边玩时的电池发热", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 0.95},
+        {"dimension": "快充", "statement": "80W 快充缩短游戏间隙补能时间", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
       ],
       "tradeoffs": ["外观和重量偏游戏风格，拍照不是主要卖点"],
       "skus": [{
@@ -472,6 +550,11 @@
         "4500mAh 电池覆盖中度日常使用",
         "45W USB-PD 快充可复用通用充电器"
       ],
+      "decision_evidence": [
+        {"dimension": "轻便", "statement": "窄机身和轻量设计适合单手使用、通勤与旅行", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "4500mAh 电池覆盖中度日常使用", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "快充", "statement": "45W USB-PD 快充可复用通用充电器", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
       "tradeoffs": ["屏幕和扬声器规模较小，不适合追求沉浸游戏体验的用户"],
       "skus": [{
         "sku_id": "sku-compact-s-256-white",
@@ -501,6 +584,10 @@
         "自适应降噪和通透模式覆盖通勤与旅行",
         "单次 8 小时续航并支持双设备连接"
       ],
+      "decision_evidence": [
+        {"dimension": "降噪", "statement": "自适应降噪和通透模式覆盖通勤与旅行", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "续航", "statement": "单次 8 小时续航并支持双设备连接", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
+      ],
       "tradeoffs": ["强调便携和降噪，解析力不及监听取向耳机"],
       "skus": [{
         "sku_id": "sku-clearsound-travel-anc-black",
@@ -524,10 +611,15 @@
       "title": "StudioPods Creator",
       "category": "headphones",
       "brand": "StudioPods",
-      "tags": ["耳机", "音质", "视频", "创作", "低延迟", "蓝牙"],
+      "tags": ["耳机", "音质", "视频", "创作", "游戏", "低延迟", "蓝牙"],
       "decision_facts": [
-        "低延迟监听和中性调音适合视频剪辑与内容创作",
+        "有线 USB-C 音频和低延迟监听模式适合游戏与视频创作",
         "蓝牙 AAC 与有线 USB-C 两种连接方式便于切换设备"
+      ],
+      "decision_evidence": [
+        {"dimension": "游戏", "statement": "有线 USB-C 音频和低延迟监听模式减少游戏声音延迟", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "创作", "statement": "低延迟监听和中性调音适合视频剪辑与内容创作", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "连接", "statement": "蓝牙 AAC 与有线 USB-C 两种连接方式便于切换设备", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
       ],
       "tradeoffs": ["降噪强度低于纯通勤旗舰，佩戴体积略大"],
       "skus": [{
@@ -539,7 +631,7 @@
         "offers": [{
           "offer_id": "offer-studiopods-creator-self",
           "seller_id": "buysense-benchmark-self",
-          "price": 899,
+          "price": 699,
           "currency": "CNY",
           "stock": 44,
           "sponsored": false,
@@ -556,6 +648,10 @@
       "decision_facts": [
         "65W USB-PD 与 PPS 覆盖手机、平板和轻薄本",
         "双 USB-C 口适合旅行时减少充电器数量"
+      ],
+      "decision_evidence": [
+        {"dimension": "快充", "statement": "65W USB-PD 与 PPS 覆盖手机、平板和轻薄本", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "多设备", "statement": "双 USB-C 口适合旅行时减少充电器数量", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
       ],
       "tradeoffs": ["双口同时使用会动态分配功率，单设备峰值会下降"],
       "skus": [{
@@ -585,6 +681,10 @@
       "decision_facts": [
         "45W USB-PD 与 PPS 满足主流手机快充并保持小体积",
         "折叠插脚便于通勤和旅行收纳"
+      ],
+      "decision_evidence": [
+        {"dimension": "快充", "statement": "45W USB-PD 与 PPS 满足主流手机快充并保持小体积", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0},
+        {"dimension": "便携", "statement": "折叠插脚便于通勤和旅行收纳", "source_type": "catalog_snapshot", "source_ref": "normal-3c-snapshot-v2", "confidence": 1.0}
       ],
       "tradeoffs": ["不适合需要 65W 以上输入的高性能笔记本"],
       "skus": [{

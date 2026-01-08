@@ -43,10 +43,19 @@ buysense:
     base-url: ${BUYSENSE_MODELPORT_URL:http://127.0.0.1:38082}
     api-key: ${BUYSENSE_MODELPORT_KEY:dev-client-key}
     model: ${BUYSENSE_MODELPORT_MODEL:qwen-default}
+    role-models:
+      intent_router: ${BUYSENSE_MODELPORT_MODEL_INTENT_ROUTER:${BUYSENSE_MODELPORT_MODEL:qwen-default}}
+      search: ${BUYSENSE_MODELPORT_MODEL_SEARCH:${BUYSENSE_MODELPORT_MODEL:qwen-default}}
+      recommendation: ${BUYSENSE_MODELPORT_MODEL_RECOMMENDATION:${BUYSENSE_MODELPORT_MODEL:qwen-default}}
+      ads: ${BUYSENSE_MODELPORT_MODEL_ADS:${BUYSENSE_MODELPORT_MODEL:qwen-default}}
+      critic: ${BUYSENSE_MODELPORT_MODEL_CRITIC:${BUYSENSE_MODELPORT_MODEL:qwen-default}}
+      lead: ${BUYSENSE_MODELPORT_MODEL_LEAD:${BUYSENSE_MODELPORT_MODEL:qwen-default}}
     connect-timeout: 1s
     read-timeout: 45s
     max-calls-per-run: 6
     max-tokens-per-call: 768
+    thinking-mode: ${BUYSENSE_MODELPORT_THINKING_MODE:disabled}
+    disabled-roles: ${BUYSENSE_MODELPORT_DISABLED_ROLES:}
   domain:
     default-bundle:
       - phone
@@ -60,6 +69,16 @@ buysense:
     allow-insecure-http: ${BUYSENSE_RETAIL_ALLOW_INSECURE_HTTP:false}
     connect-timeout: 1s
     read-timeout: 2s
+    max-response-bytes: 1048576
+  review-provider:
+    enabled: ${BUYSENSE_REVIEW_PROVIDER_ENABLED:false}
+    base-url: ${BUYSENSE_REVIEW_PROVIDER_URL:}
+    query-path: ${BUYSENSE_REVIEW_PROVIDER_QUERY_PATH:/v1/reviews/query}
+    api-key: ${BUYSENSE_REVIEW_PROVIDER_KEY:}
+    fallback-enabled: ${BUYSENSE_REVIEW_FALLBACK_ENABLED:false}
+    allow-insecure-http: ${BUYSENSE_REVIEW_ALLOW_INSECURE_HTTP:false}
+    connect-timeout: 1s
+    read-timeout: 3s
     max-response-bytes: 1048576
   shopify:
     enabled: ${BUYSENSE_SHOPIFY_ENABLED:false}

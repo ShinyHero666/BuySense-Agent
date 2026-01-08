@@ -160,7 +160,7 @@ class ShopifyRetailProviderContractTest {
                 Duration.ofMinutes(5));
         ShopifyRetailProvider provider = new ShopifyRetailProvider(
                 mapper, properties, shopify.endpoint(), CLOCK);
-        return RetailDataGateway.withProvider(mapper, domains, provider, fallback);
+        return RetailDataGateway.withProvider(mapper, domains, provider, fallback, CLOCK);
     }
 
     private enum Mode {

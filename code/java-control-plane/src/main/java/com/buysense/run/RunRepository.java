@@ -493,6 +493,46 @@ public class RunRepository {
         return matches.stream().findFirst().map(this::restore);
     }
 
+    public boolean isCancellationRequested(String runId) {
+        return jdbc.query(
+                        "select cancellation_requested, status from agent_runs where run_id = ?",
+                        (rs, rowNum) -> rs.getBoolean("cancellation_requested")
+                                || "cancelled".equals(rs.getString("status")),
+                        runId)
+                .stream()
+                .findFirst()
+                .orElse(false);
+    }
+
+    public Optional<String> findStatus(String runId) {
+        return jdbc.query(
+                        "select status from agent_runs where run_id = ?",
+                        (rs, rowNum) -> rs.getString("status"),
+                        runId)
+                .stream()
+                .findFirst();
+    }
+
+    public List<RunEvent> listEventsAfter(String runId, long afterSequence) {
+        return jdbc.query("""
+                        select event_id, task_id, parent_task_id, sequence_no,
+                               event_type, event_time, payload_json
+                        from run_events
+                        where run_id = ? and sequence_no > ?
+                        order by sequence_no
+                        """,
+                (rs, rowNum) -> new RunEvent(
+                        rs.getString("event_id"),
+                        runId,
+                        rs.getString("task_id"),
+                        rs.getString("parent_task_id"),
+                        rs.getLong("sequence_no"),
+                        rs.getString("event_type"),
+                        instant(rs, "event_time"),
+                        read(rs.getString("payload_json"), EVENT_PAYLOAD)),
+                runId, afterSequence);
+    }
+
     private static String selectRuns(String suffix) {
         return """
                 select run_id, identity_id, session_id, message, confirmation_requested,

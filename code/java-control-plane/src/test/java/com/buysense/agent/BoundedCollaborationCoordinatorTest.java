@@ -4,6 +4,10 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -65,5 +69,55 @@ class BoundedCollaborationCoordinatorTest {
                 "search", "recommendation", "recommendation_strategy_and_retrieval",
                 "search-task-3", "").status())
                 .isEqualTo("rejected");
+    }
+
+    @Test
+    void executesTheInjectedWorkflowGraphInsteadOfTheDefaultGraph() {
+        var coordinator = new BoundedCollaborationCoordinator(
+                "custom-workflow",
+                (role, event, detail) -> { },
+                BoundedCollaborationCoordinator.DEFAULT_POLICY,
+                Map.of(
+                        "lead", Set.of("intent_router"),
+                        "intent_router", Set.of()),
+                Map.of(
+                        "intent_router", Set.of("understand_and_route")));
+
+        assertThat(coordinator.delegate(
+                "lead", "intent_router", "understand_and_route",
+                "root", 1, 0, () -> "ok")).isEqualTo("ok");
+        assertThatThrownBy(() -> coordinator.delegate(
+                "lead", "search", "search_strategy_and_retrieval",
+                "root", 1, 0, () -> "no"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("collaboration_delegation_denied");
+    }
+
+    @Test
+    void cancellationBeforeTaskCommitPreventsACompletedTask() {
+        AtomicBoolean cancelled = new AtomicBoolean();
+        var coordinator = new BoundedCollaborationCoordinator(
+                "cancelled-workflow",
+                (role, event, detail) -> { },
+                BoundedCollaborationCoordinator.DEFAULT_POLICY,
+                Map.of("lead", Set.of("search")),
+                Map.of("search", Set.of("search_strategy_and_retrieval")),
+                cancelled::get);
+
+        assertThatThrownBy(() -> coordinator.delegate(
+                "lead",
+                "search",
+                "search_strategy_and_retrieval",
+                "root",
+                1,
+                0,
+                () -> {
+                    cancelled.set(true);
+                    return "must-not-commit";
+                }))
+                .isInstanceOf(CancellationException.class)
+                .hasMessageContaining("run cancelled");
+        assertThat(coordinator.tasks()).singleElement().satisfies(task ->
+                assertThat(task.status()).isEqualTo("failed"));
     }
 }

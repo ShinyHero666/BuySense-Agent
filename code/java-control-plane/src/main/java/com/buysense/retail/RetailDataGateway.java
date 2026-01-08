@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -38,6 +39,7 @@ public final class RetailDataGateway {
     private final RetailProvider provider;
     private final boolean fallbackEnabled;
     private final String remoteProviderId;
+    private final Clock clock;
     private final Map<String, RetailDataSnapshot> localSnapshots = new ConcurrentHashMap<>();
     private final Map<String, RetailSourceState> states = new LinkedHashMap<>();
 
@@ -52,19 +54,22 @@ public final class RetailDataGateway {
                 mapper,
                 domains,
                 selectProvider(mapper, properties, shopifyProperties),
-                selectFallback(properties, shopifyProperties));
+                selectFallback(properties, shopifyProperties),
+                Clock.systemUTC());
     }
 
     private RetailDataGateway(
             ObjectMapper mapper,
             DomainPackRegistry domains,
             RetailProvider provider,
-            boolean fallbackEnabled
+            boolean fallbackEnabled,
+            Clock clock
     ) {
         this.mapper = mapper;
         this.domains = domains;
         this.provider = provider;
         this.fallbackEnabled = fallbackEnabled;
+        this.clock = java.util.Objects.requireNonNull(clock);
         this.remoteProviderId = provider == null ? null : provider.providerId();
         for (String resource : RESOURCES) {
             states.put(resource, new RetailSourceState(
@@ -84,7 +89,18 @@ public final class RetailDataGateway {
             RetailProvider provider,
             boolean fallbackEnabled
     ) {
-        return new RetailDataGateway(mapper, domains, provider, fallbackEnabled);
+        return new RetailDataGateway(
+                mapper, domains, provider, fallbackEnabled, Clock.systemUTC());
+    }
+
+    static RetailDataGateway withProvider(
+            ObjectMapper mapper,
+            DomainPackRegistry domains,
+            RetailProvider provider,
+            boolean fallbackEnabled,
+            Clock clock
+    ) {
+        return new RetailDataGateway(mapper, domains, provider, fallbackEnabled, clock);
     }
 
     public RetailDataSnapshot load(String domainPackId) {
@@ -158,6 +174,11 @@ public final class RetailDataGateway {
         if (!current.compatible(refreshed, pack.primaryCategory())) {
             throw new ProviderException("proposal_compatibility_changed");
         }
+        java.time.Instant now = clock.instant();
+        java.time.Instant quoteExpiresAt = refreshed.stream()
+                .map(product -> quoteExpiry(product, now))
+                .min(java.time.Instant::compareTo)
+                .orElseThrow(() -> new ProviderException("proposal_quote_invalid"));
         BigDecimal total = refreshed.stream()
                 .map(Product::price)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -166,8 +187,27 @@ public final class RetailDataGateway {
                 total,
                 current.catalogVersion(),
                 current.sources().get("pricingVersion"),
-                provider != null ? remoteProviderId : pack.packId());
+                provider != null ? remoteProviderId : pack.packId(),
+                quoteExpiresAt);
     }
+
+    private java.time.Instant quoteExpiry(Product product, java.time.Instant now) {
+        String value = product.quoteValidUntil();
+        if (value == null || value.isBlank()) {
+            if (provider == null) return now.plus(java.time.Duration.ofMinutes(15));
+            throw new ProviderException("proposal_quote_invalid");
+        }
+        try {
+            java.time.Instant expiresAt = java.time.Instant.parse(value);
+            if (!expiresAt.isAfter(now)) {
+                throw new ProviderException("proposal_quote_expired");
+            }
+            return expiresAt;
+        } catch (java.time.format.DateTimeParseException error) {
+            throw new ProviderException("proposal_quote_invalid");
+        }
+    }
+
     public Map<String, Map<String, Object>> health() {
         Map<String, Map<String, Object>> result = new LinkedHashMap<>();
         states.forEach((name, state) -> result.put(name, state.snapshot()));
@@ -304,6 +344,9 @@ public final class RetailDataGateway {
                 String title = boundedText(sku, "title", 300);
                 List<String> connectors = strings(sku, "connectors", 100);
                 List<String> protocols = strings(sku, "protocols", 100);
+                Integer maxPowerWatts = sku.hasNonNull("max_power_watts")
+                        ? nonNegativeInteger(sku, "max_power_watts")
+                        : null;
                 for (JsonNode offer : array(sku, "offers", 100)) {
                     String offerId = boundedText(offer, "offer_id", 128);
                     if (!seenOfferIds.add(offerId)) throw new IllegalArgumentException("duplicate catalog offer id");
@@ -336,7 +379,10 @@ public final class RetailDataGateway {
                             offer.path("currency").asText("CNY"),
                             version,
                             root.path("quote_version").asText(version),
-                            offer.path("valid_until").asText("")));
+                            offer.path("valid_until").asText(""),
+                            connectors,
+                            protocols,
+                            maxPowerWatts));
                     if (metadata.containsKey(productId)) {
                         throw new IllegalArgumentException("duplicate catalog product id");
                     }
@@ -393,7 +439,8 @@ public final class RetailDataGateway {
                     product.productId(), product.skuId(), product.offerId(),
                     quote.path("currency").asText("CNY"), product.catalogVersion(),
                     root.path("quote_version").asText(text(root.path("data_source"), "source_version")),
-                    quote.path("valid_until").asText("")));
+                    quote.path("valid_until").asText(""), product.connectors(),
+                    product.protocols(), product.maxPowerWatts()));
             metadata.put(product.id(), new CatalogItemMetadata(
                     item.spuId(), item.offerId(), stock, item.connectors(), item.protocols(),
                     "remote_provider", text(root.path("data_source"), "source_version"), remoteProviderId));
@@ -654,7 +701,8 @@ public final class RetailDataGateway {
             BigDecimal totalPrice,
             String catalogVersion,
             String pricingVersion,
-            String providerId
+            String providerId,
+            java.time.Instant quoteExpiresAt
     ) {
         public RevalidatedSelection {
             items = List.copyOf(items);

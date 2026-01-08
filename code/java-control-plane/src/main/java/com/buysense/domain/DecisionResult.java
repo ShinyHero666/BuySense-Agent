@@ -35,7 +35,12 @@ public record DecisionResult(
                 null,
                 null,
                 null,
-                false);
+                false,
+                "buysense-replay",
+                true,
+                0,
+                0,
+                List.of());
     }
 
     public record BundleProposal(
@@ -63,7 +68,35 @@ public record DecisionResult(
             String intent,
             String explanation,
             String criticVerdict,
-            boolean revisionApplied
+            boolean revisionApplied,
+            String provider,
+            boolean localOnly,
+            int proposalAccepted,
+            int proposalCorrected,
+            List<RoleExecution> roleExecutions
     ) {
+        public ModelRuntime {
+            roleExecutions = roleExecutions == null
+                    ? List.of() : List.copyOf(roleExecutions);
+        }
+    }
+
+    public record RoleExecution(
+            String role,
+            String mode,
+            String provider,
+            String model,
+            String outcome,
+            boolean proposalUsed,
+            List<String> corrections,
+            long latencyMs,
+            int inputTokens,
+            int outputTokens,
+            int totalTokens,
+            String error
+    ) {
+        public RoleExecution {
+            corrections = corrections == null ? List.of() : List.copyOf(corrections);
+        }
     }
 }

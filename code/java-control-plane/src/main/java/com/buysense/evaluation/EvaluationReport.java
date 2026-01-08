@@ -11,14 +11,22 @@ public record EvaluationReport(
         String evaluatorVersion,
         String suiteId,
         String systemVersion,
+        String systemVariantId,
+        EvaluationSuite.Protocol protocol,
         Instant generatedAt,
         String status,
         Aggregate aggregate,
         List<TrialResult> trials,
+        List<ModelJudgment> modelJudgments,
         List<ManualReviewItem> manualReviewQueue
 ) {
     public EvaluationReport {
+        systemVariantId = systemVariantId == null || systemVariantId.isBlank()
+                ? "configured-system"
+                : systemVariantId;
+        protocol = protocol == null ? EvaluationSuite.Protocol.legacy() : protocol;
         trials = List.copyOf(trials);
+        modelJudgments = modelJudgments == null ? List.of() : List.copyOf(modelJudgments);
         manualReviewQueue = List.copyOf(manualReviewQueue);
     }
 
@@ -68,8 +76,17 @@ public record EvaluationReport(
             String category,
             String brand,
             String price,
+            List<String> tags,
+            List<String> connectors,
+            List<String> protocols,
+            Integer maxPowerWatts,
             boolean sponsored
     ) {
+        public SelectedProduct {
+            tags = List.copyOf(tags);
+            connectors = List.copyOf(connectors);
+            protocols = List.copyOf(protocols);
+        }
     }
 
     public record TrialResult(
@@ -122,6 +139,16 @@ public record EvaluationReport(
             double averageTokens,
             Map<String, Long> failuresByCategory,
             Map<String, Double> taskSuccessRateByTag,
+            int compositePassedTrials,
+            double compositeSuccessRate,
+            double compositePassAtOne,
+            double compositePassAtK,
+            double compositePassPowerK,
+            double taskSuccessCi95Low,
+            double taskSuccessCi95High,
+            double modelJudgePassRate,
+            double averageJudgeTokens,
+            int pendingModelReviews,
             int pendingManualReviews
     ) {
         public Aggregate {
@@ -130,15 +157,49 @@ public record EvaluationReport(
         }
     }
 
+    public record ModelJudgment(
+            String reviewId,
+            String runId,
+            String caseId,
+            String rubricId,
+            String criterion,
+            EvaluationCase.RubricEnforcement enforcement,
+            int minimumScore,
+            String modelId,
+            EvaluationModelJudge.Label label,
+            int score,
+            double confidence,
+            String rationale,
+            long latencyMs,
+            int totalTokens,
+            String error
+    ) {
+        public ModelJudgment {
+            reviewId = reviewId == null ? "" : reviewId;
+            modelId = modelId == null ? "" : modelId;
+            label = label == null ? EvaluationModelJudge.Label.UNKNOWN : label;
+            rationale = rationale == null ? "" : rationale;
+            error = error == null ? "" : error;
+        }
+
+        public boolean blocking() {
+            return enforcement == EvaluationCase.RubricEnforcement.BLOCKING;
+        }
+    }
+
     public record ManualReviewItem(
             String reviewId,
             String caseId,
             String runId,
             String prompt,
+            Map<String, Object> context,
             String rubric,
             String response,
             String label,
             String rationale
     ) {
+        public ManualReviewItem {
+            context = Map.copyOf(context);
+        }
     }
 }

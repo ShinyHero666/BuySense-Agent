@@ -57,6 +57,23 @@ public final class ExtensionRegistry {
         return workflow;
     }
 
+    public WorkflowGraph requireWorkflowGraph(String workflowId) {
+        WorkflowDefinition workflow = requireWorkflow(workflowId);
+        Map<String, Set<String>> allowedDelegations = new LinkedHashMap<>();
+        workflow.allowedDelegations().forEach((source, targets) ->
+                allowedDelegations.put(source, new LinkedHashSet<>(targets)));
+        Map<String, Set<String>> roleCapabilities = new LinkedHashMap<>();
+        for (String capabilityId : workflow.capabilityIds()) {
+            CapabilityDefinition capability = capabilities.get(capabilityId);
+            if (capability == null) {
+                throw new IllegalStateException("workflow references unknown capability: " + capabilityId);
+            }
+            roleCapabilities.computeIfAbsent(capability.role(), ignored -> new LinkedHashSet<>())
+                    .add(capability.id());
+        }
+        return new WorkflowGraph(allowedDelegations, roleCapabilities);
+    }
+
     public void requireDelegation(String workflowId, String delegatedBy, String targetRole) {
         WorkflowDefinition workflow = requireWorkflow(workflowId);
         if (!workflow.allowedDelegations().getOrDefault(delegatedBy, List.of()).contains(targetRole)) {
@@ -155,6 +172,27 @@ public final class ExtensionRegistry {
                 graph);
     }
 
+
+    public record WorkflowGraph(
+            Map<String, Set<String>> allowedDelegations,
+            Map<String, Set<String>> roleCapabilities
+    ) {
+        public WorkflowGraph {
+            allowedDelegations = freeze(allowedDelegations);
+            roleCapabilities = freeze(roleCapabilities);
+        }
+
+        private static Map<String, Set<String>> freeze(Map<String, Set<String>> source) {
+            LinkedHashMap<String, Set<String>> copy = new LinkedHashMap<>();
+            source.forEach((key, values) -> {
+                if (key == null || key.isBlank() || values == null) {
+                    throw new IllegalArgumentException("workflow graph contains an invalid entry");
+                }
+                copy.put(key, Set.copyOf(values));
+            });
+            return Map.copyOf(copy);
+        }
+    }
     public record CapabilityDefinition(String id, String version, String role) {
     }
 

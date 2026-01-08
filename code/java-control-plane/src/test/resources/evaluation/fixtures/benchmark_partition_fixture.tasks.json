@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0",
+  "taskSetId": "benchmark-partition-fixture-tasks",
+  "suiteId": "benchmark-partition-fixture",
+  "description": "Public fixture for testing task and grading-contract separation.",
+  "systemVersion": "fixture-v1",
+  "partition": "CAPABILITY_HOLDOUT",
+  "promptTuningAllowed": false,
+  "dataSnapshotIds": ["fixture-catalog-v1"],
+  "tasks": [
+    {
+      "caseId": "fixture-budget-boundary",
+      "domainPackId": "normal-3c-v1",
+      "prompt": "Recommend a product without exceeding the stated budget.",
+      "tags": ["fixture", "budget"],
+      "trials": 3
+    }
+  ]
+}

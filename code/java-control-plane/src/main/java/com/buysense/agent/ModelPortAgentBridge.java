@@ -2,8 +2,7 @@ package com.buysense.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.buysense.domain.Candidate;
-import com.buysense.domain.DecisionResult;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -17,7 +16,7 @@ import java.util.Map;
 
 /** OpenAI-compatible transport for the six bounded roles in the BuySense workflow. */
 @Component
-public class ModelPortAgentBridge {
+public class ModelPortAgentBridge implements AgentModelTransport {
     private final ModelPortProperties properties;
     private final ObjectMapper mapper;
     private final RestClient client;
@@ -40,154 +39,168 @@ public class ModelPortAgentBridge {
         this.lastStatus = properties.isEnabled() ? "configured" : "offline";
     }
 
-    public RoleCall plan(String runId, String message, int ordinal) {
-        String system = """
-                你是购买决策系统的 Intent Router。只输出一个 JSON 对象：
-                intent、query、requestedCategories、preferredBrands、useCases、channels、
-                sponsoredAllowed、candidateBudget、reason。
-                必须保留用户原始问题、显式预算、品类、品牌、用途和不要广告要求；
-                search 必须保留，套装必须保留 recommendation，禁止编造商品事实。
-                """;
-        return call(runId, "intent_router", system, message, ordinal);
+    @Override
+    public String mode() {
+        return properties.isEnabled() ? "modelport" : "replay";
     }
 
-    public RoleCall rank(
-            String runId,
-            String role,
-            List<Candidate> candidates,
-            int ordinal
+    @Override
+    public AgentModelTransport.Description describe(String role) {
+        boolean replay = !properties.isEnabled();
+        return new AgentModelTransport.Description(
+                replay ? "buysense-replay" : "modelport",
+                replay ? "replay-" + role : properties.modelForRole(role),
+                true);
+    }
+
+    @Override
+    public AgentModelTransport.Completion complete(AgentModelTransport.Request request) {
+        if (!properties.isEnabled()) {
+            return replayCompletion(request);
+        }
+        if (!properties.isRoleEnabled(request.role())) {
+            throw new AgentModelTransport.UnavailableException(
+                    "model role is disabled: " + request.role());
+        }
+        long started = System.nanoTime();
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", properties.modelForRole(request.role()));
+            body.put("temperature", 0);
+            body.put("max_tokens", properties.getMaxTokensPerCall());
+            body.put("messages", request.messages().stream()
+                    .map(this::transportMessage).toList());
+            body.put("tools", request.tools().stream()
+                    .map(this::transportTool).toList());
+            if (!"default".equals(properties.getThinkingMode())) {
+                body.put("thinking", Map.of("type", properties.getThinkingMode()));
+            }
+            // DeepSeek thinking mode rejects forced tool choice and requires
+            // reasoning-content replay. These bounded roles use non-thinking
+            // mode so the artifact tool can remain mandatory and inexpensive.
+            if ("disabled".equals(properties.getThinkingMode())) {
+                body.put("tool_choice", "required");
+            }
+            body.put("parallel_tool_calls", false);
+
+            JsonNode response = client.post()
+                    .uri("/v1/chat/completions")
+                    .header("x-api-key", properties.getApiKey())
+                    .header("Authorization", "Bearer " + properties.getApiKey())
+                    .header("Idempotency-Key",
+                            request.runId() + "-" + request.role() + "-turn-" + request.turn())
+                    .header("x-modelport-traffic-class", "business")
+                    .header("x-modelport-hybrid-mode", "local_strict")
+                    .header("x-modelport-data-classification", "internal")
+                    .header("x-modelport-agent-role", request.role())
+                    .body(body)
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            JsonNode message = response == null
+                    ? mapper.createObjectNode()
+                    : response.path("choices").path(0).path("message");
+            List<AgentModelTransport.ToolCall> toolCalls = new ArrayList<>();
+            message.path("tool_calls").forEach(item -> {
+                String id = item.path("id").asText();
+                String name = item.path("function").path("name").asText();
+                String arguments = item.path("function").path("arguments").asText("{}");
+                toolCalls.add(new AgentModelTransport.ToolCall(
+                        id, name, parseToolArguments(arguments)));
+            });
+            int inputTokens = response == null ? 0
+                    : response.path("usage").path("prompt_tokens").asInt();
+            int outputTokens = response == null ? 0
+                    : response.path("usage").path("completion_tokens").asInt();
+            int totalTokens = response == null ? 0
+                    : response.path("usage").path("total_tokens")
+                            .asInt(inputTokens + outputTokens);
+            lastStatus = "up";
+            lastLatencyMs = elapsed(started);
+            return new AgentModelTransport.Completion(
+                    message.path("content").isTextual()
+                            ? message.path("content").asText() : null,
+                    toolCalls,
+                    new AgentModelTransport.Usage(inputTokens, outputTokens, totalTokens));
+        } catch (AgentModelTransport.UnavailableException error) {
+            throw error;
+        } catch (Exception error) {
+            lastStatus = "degraded";
+            lastLatencyMs = elapsed(started);
+            throw new AgentModelTransport.UnavailableException(
+                    "model transport failed: " + error.getClass().getSimpleName());
+        }
+    }
+
+    private AgentModelTransport.Completion replayCompletion(
+            AgentModelTransport.Request request
     ) {
-        List<Map<String, Object>> grounded = candidates.stream().map(candidate -> Map.<String, Object>of(
-                "skuId", candidate.product().skuId(),
-                "title", candidate.product().name(),
-                "category", candidate.product().category(),
-                "price", candidate.product().price(),
-                "score", candidate.score(),
-                "sponsored", candidate.sponsored())).toList();
-        String system = """
-                你是搜广推渠道排序角色。只输出 JSON：rankedSkuIds、rationaleBySku；
-                只能重排输入中已有 SKU，不能新增商品、价格、库存或兼容性事实。
-                """;
-        return call(runId, role, system, json(Map.of("candidates", grounded)), ordinal);
+        ObjectNode arguments = mapper.createObjectNode();
+        arguments.put("payload", replayPayload(request));
+        return new AgentModelTransport.Completion(
+                null,
+                List.of(new AgentModelTransport.ToolCall(
+                        "call-" + request.role(),
+                        "publish_artifact",
+                        arguments)),
+                AgentModelTransport.Usage.ZERO);
     }
 
-    public RoleCall reviewDecision(
-            String runId,
-            String message,
-            DecisionResult decision,
-            int ordinal
-    ) {
-        List<Map<String, Object>> candidates = decision.slate().stream().limit(12)
-                .map(candidate -> Map.<String, Object>of(
-                        "skuId", candidate.product().skuId(),
-                        "category", candidate.product().category(),
-                        "price", candidate.product().price(),
-                        "sponsored", candidate.sponsored(),
-                        "score", candidate.score()))
-                .toList();
-        Map<String, Object> evidence = new LinkedHashMap<>();
-        evidence.put("query", message);
-        evidence.put("budget", decision.requirement().budget());
-        evidence.put("requestedCategories", decision.requirement().requiredCategories());
-        evidence.put("useCases", decision.requirement().useCases());
-        evidence.put("candidates", candidates);
-        evidence.put("bundleCount", decision.bundles().size());
-        evidence.put("deterministicViolations",
-                decision.metrics().getOrDefault("criticViolations", List.of()));
-        String system = """
-                你是独立 Critic。确定性代码已经完成硬约束审核。
-                只输出 JSON：verdict、rationale、additionalViolations。
-                你不能删除确定性违规，只能在证据确实支持时补充：
-                insufficient_review_confidence、weak_use_case_match、ambiguous_compatibility。
-                """;
-        return call(runId, "critic", system, json(evidence), ordinal);
+    private String replayPayload(AgentModelTransport.Request request) {
+        for (int index = request.messages().size() - 1; index >= 0; index--) {
+            AgentModelTransport.Message message = request.messages().get(index);
+            if (!"user".equals(message.role()) || message.content() == null) continue;
+            try {
+                JsonNode envelope = mapper.readTree(message.content());
+                JsonNode context = envelope.path("authoritativeContext");
+                if (!context.isMissingNode()) return json(context);
+            } catch (Exception ignored) {
+                // A malformed prompt still receives a valid replay tool payload.
+            }
+        }
+        return "{}";
     }
 
-    public RoleCall compose(
-            String runId,
-            String deterministicMessage,
-            boolean approved,
-            int ordinal
-    ) {
-        String system = """
-                你是 Lead，只基于输入证据组织最终中文说明。只输出 JSON：message、approved。
-                approved 不得改变；不得新增数字，不得声称已下单、已创建订单、已支付或支付成功。
-                商品行中出现“｜赞助”时必须原样保留，不能删除或改写为普通商品；推荐依据中出现“快充依据”、功率或协议时必须保留。
-                只能调整语言顺序，不得删除输入中已有的推荐依据、取舍、预算利用率、兼容依据和交易边界。
-                对比场景必须保留多个候选，不能合并成单个推荐；套装场景必须保留总价和兼容说明。
-                """;
-        return call(runId, "lead", system, json(Map.of(
-                "message", deterministicMessage, "approved", approved)), ordinal);
+    private Map<String, Object> transportMessage(AgentModelTransport.Message message) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("role", message.role());
+        if (message.content() != null) value.put("content", message.content());
+        if (message.toolCallId() != null) value.put("tool_call_id", message.toolCallId());
+        if (!message.toolCalls().isEmpty()) {
+            value.put("tool_calls", message.toolCalls().stream().map(call -> Map.of(
+                    "id", call.id(),
+                    "type", "function",
+                    "function", Map.of(
+                            "name", call.name(),
+                            "arguments", json(call.arguments())))).toList());
+        }
+        return value;
     }
 
+    private Map<String, Object> transportTool(AgentModelTransport.ToolDefinition definition) {
+        return Map.of(
+                "type", "function",
+                "function", Map.of(
+                        "name", definition.name(),
+                        "description", definition.description(),
+                        "parameters", mapper.convertValue(definition.parameters(), Object.class)));
+    }
+
+    private JsonNode parseToolArguments(String value) {
+        try {
+            JsonNode parsed = mapper.readTree(value);
+            if (parsed != null && parsed.isObject()) return parsed;
+        } catch (Exception ignored) {
+            // The role loop returns a validation error to the model as the tool result.
+        }
+        return mapper.createObjectNode().put("_invalidArguments", value);
+    }
     public Status status() {
         return new Status(
                 properties.isEnabled() ? "modelport" : "replay",
                 properties.isEnabled() ? properties.getModel() : "deterministic-replay",
                 lastStatus,
                 lastLatencyMs);
-    }
-
-    private RoleCall call(
-            String runId,
-            String role,
-            String system,
-            String user,
-            int ordinal
-    ) {
-        if (!properties.isEnabled() || ordinal > properties.getMaxCallsPerRun()) {
-            return RoleCall.disabled(role);
-        }
-        long started = System.nanoTime();
-        try {
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("model", properties.getModel());
-            body.put("temperature", 0);
-            body.put("max_tokens", properties.getMaxTokensPerCall());
-            body.put("messages", List.of(
-                    Map.of("role", "system", "content", system),
-                    Map.of("role", "user", "content", user)));
-            JsonNode response = client.post()
-                    .uri("/v1/chat/completions")
-                    .header("x-api-key", properties.getApiKey())
-                    .header("Authorization", "Bearer " + properties.getApiKey())
-                    .header("Idempotency-Key", runId + "-" + role + "-" + ordinal)
-                    .body(body)
-                    .retrieve()
-                    .body(JsonNode.class);
-            long latency = elapsed(started);
-            String content = response == null ? ""
-                    : response.path("choices").path(0).path("message").path("content").asText("");
-            JsonNode proposal = parseObject(content);
-            if (proposal == null) {
-                lastStatus = "degraded";
-                lastLatencyMs = latency;
-                return RoleCall.failure(role, latency, "model returned non-JSON content");
-            }
-            int totalTokens = response.path("usage").path("total_tokens").asInt(
-                    response.path("usage").path("prompt_tokens").asInt()
-                            + response.path("usage").path("completion_tokens").asInt());
-            lastStatus = "up";
-            lastLatencyMs = latency;
-            return new RoleCall(role, true, true, proposal, totalTokens, latency, null);
-        } catch (Exception error) {
-            long latency = elapsed(started);
-            lastStatus = "degraded";
-            lastLatencyMs = latency;
-            return RoleCall.failure(role, latency, error.getClass().getSimpleName());
-        }
-    }
-
-    private JsonNode parseObject(String content) {
-        int start = content.indexOf('{');
-        int end = content.lastIndexOf('}');
-        if (start < 0 || end <= start) return null;
-        try {
-            JsonNode parsed = mapper.readTree(content.substring(start, end + 1));
-            return parsed.isObject() ? parsed : null;
-        } catch (Exception ignored) {
-            return null;
-        }
     }
 
     private String json(Object value) {
@@ -211,10 +224,24 @@ public class ModelPortAgentBridge {
             boolean attempted,
             boolean success,
             JsonNode proposal,
+            int inputTokens,
+            int outputTokens,
             int totalTokens,
             long latencyMs,
             String error
     ) {
+        public RoleCall(
+                String role,
+                boolean attempted,
+                boolean success,
+                JsonNode proposal,
+                int totalTokens,
+                long latencyMs,
+                String error
+        ) {
+            this(role, attempted, success, proposal, 0, 0, totalTokens, latencyMs, error);
+        }
+
         public static RoleCall disabled(String role) {
             return new RoleCall(role, false, false, null, 0, 0, null);
         }
