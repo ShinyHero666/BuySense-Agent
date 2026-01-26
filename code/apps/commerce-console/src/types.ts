@@ -66,7 +66,7 @@ export interface Decision {
 }
 
 export interface BuyerReply {
-  phase: "proposal" | "cart_draft" | "needs_replan" | "no_pending_decision";
+  phase: "proposal" | "clarification" | "cart_draft" | "needs_replan" | "no_pending_decision";
   message: string;
   decision: Decision | null;
   cartDraft: null | { draftId: string; totalPrice: number; expiresAt: string; paymentAuthorized: false };
@@ -105,17 +105,21 @@ export interface RuntimeStatus {
 
 export interface QualityReport {
   suite: string;
-  evaluation_kind: "synthetic_deterministic_regression";
+  evaluation_kind: "human_authored_business_cases";
   label_provenance: string;
   generated_at: string;
   catalog_version: string;
   case_count: number;
   spu_count: number;
   metrics: {
-    recall_at_10: number;
-    ndcg_at_10: number;
+    category_recall_at_10: number;
+    route_accuracy: number;
+    task_completion_rate: number;
+    clarification_precision: number;
+    clarification_recall: number;
+    clarification_f1: number;
     p95_latency_ms: number;
-    filter_violations: number;
+    hard_constraint_violations: number;
     ad_policy_violations: number;
   };
   passed: boolean;

@@ -93,6 +93,13 @@ export function DecisionView(props: {
         </div>
       </section>
 
+      {reply?.phase === "clarification" && (
+        <section className="clarification-banner" role="status">
+          <strong>还缺一项决策信息</strong>
+          <p>{reply.message}</p>
+        </section>
+      )}
+
       <div className="decision-grid">
         <section className="intent-panel">
           <div className="section-title"><span>01</span><div><small>INTENT MAP</small><h2>约束雷达</h2></div></div>

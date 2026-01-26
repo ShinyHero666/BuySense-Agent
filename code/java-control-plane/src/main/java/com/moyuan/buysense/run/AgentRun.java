@@ -1,0 +1,157 @@
+package com.moyuan.buysense.run;
+
+import com.moyuan.buysense.domain.DecisionResult;
+
+import java.time.Instant;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public final class AgentRun {
+    private final String runId;
+    private final String sessionId;
+    private final String message;
+    private final boolean confirmationRequested;
+    private final Instant createdAt;
+    private final List<RunEvent> events = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean cancellationRequested = new AtomicBoolean();
+    private volatile String status;
+    private volatile Instant updatedAt;
+    private volatile DecisionResult result;
+    private volatile String error;
+    private volatile String phase;
+    private volatile CartDraftState cartDraft;
+
+    public AgentRun(String runId, String sessionId, String message) {
+        this(runId, sessionId, message, false);
+    }
+
+    public AgentRun(String runId, String sessionId, String message, boolean confirmationRequested) {
+        this(runId, sessionId, message, confirmationRequested, Instant.now());
+    }
+
+    private AgentRun(
+            String runId,
+            String sessionId,
+            String message,
+            boolean confirmationRequested,
+            Instant createdAt
+    ) {
+        this.runId = runId;
+        this.sessionId = sessionId;
+        this.message = message;
+        this.confirmationRequested = confirmationRequested;
+        this.status = "queued";
+        this.createdAt = createdAt;
+        this.updatedAt = createdAt;
+    }
+
+    public static AgentRun restore(
+            String runId,
+            String sessionId,
+            String message,
+            boolean confirmationRequested,
+            String status,
+            Instant createdAt,
+            Instant updatedAt,
+            DecisionResult result,
+            String error,
+            String phase,
+            CartDraftState cartDraft,
+            boolean cancellationRequested,
+            List<RunEvent> events
+    ) {
+        AgentRun run = new AgentRun(runId, sessionId, message, confirmationRequested, createdAt);
+        run.status = status;
+        run.updatedAt = updatedAt;
+        run.result = result;
+        run.error = error;
+        run.phase = phase;
+        run.cartDraft = cartDraft;
+        run.cancellationRequested.set(cancellationRequested);
+        run.events.addAll(events);
+        return run;
+    }
+
+    public String getRunId() { return runId; }
+    public String getSessionId() { return sessionId; }
+    public String getMessage() { return message; }
+    public boolean isConfirmationRequested() { return confirmationRequested; }
+    public String getStatus() { return status; }
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+    public DecisionResult getResult() { return result; }
+    public String getError() { return error; }
+    public String getPhase() { return phase; }
+    public CartDraftState getCartDraft() { return cartDraft; }
+    public List<RunEvent> getEvents() { return List.copyOf(events); }
+    public boolean isCancellationRequested() { return cancellationRequested.get(); }
+
+    public synchronized void transition(String status) {
+        this.status = status;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void complete(DecisionResult result) {
+        this.result = result;
+        transition("completed");
+    }
+
+    public synchronized void prepareResult(DecisionResult result) {
+        this.result = result;
+        this.phase = "proposal";
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void prepareClarification(DecisionResult result) {
+        this.result = result;
+        this.phase = "clarification";
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void prepareCartDraft(DecisionResult result, CartDraftState cartDraft) {
+        this.result = result;
+        this.cartDraft = cartDraft;
+        this.phase = "cart_draft";
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void prepareNoPendingDecision() {
+        this.phase = "no_pending_decision";
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void fail(Throwable throwable) {
+        this.error = throwable.getMessage();
+        transition("failed");
+    }
+
+    public synchronized void prepareFailure(Throwable throwable) {
+        this.error = throwable.getMessage();
+        this.updatedAt = Instant.now();
+    }
+
+    public void cancel() {
+        cancellationRequested.set(true);
+        transition("cancelled");
+    }
+
+    public void requestCancellation() {
+        cancellationRequested.set(true);
+        updatedAt = Instant.now();
+    }
+
+    public void addEvent(RunEvent event) {
+        events.add(event);
+        updatedAt = Instant.now();
+    }
+
+    public record CartDraftState(
+            String draftId,
+            BigDecimal totalPrice,
+            Instant expiresAt,
+            boolean paymentAuthorized
+    ) {
+    }
+}

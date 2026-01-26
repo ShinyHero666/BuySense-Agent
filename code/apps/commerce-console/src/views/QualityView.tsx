@@ -30,10 +30,10 @@ export function QualityView(props: {
           <div className="runtime-row"><span className={`signal ${props.runtime?.dataPlane.status === "up" || props.runtime?.dataPlane.status === "embedded" ? "up" : "warn"}`} /><div><small>PYTHON DATA PLANE</small><strong>{props.runtime?.dataPlane.mode ?? "—"}</strong></div><b>{props.runtime?.dataPlane.latencyMs ?? 0} ms</b></div>
           <div className="runtime-row"><span className="signal up" /><div><small>PAYMENT BOUNDARY</small><strong>disabled by design</strong></div><b>SAFE</b></div>
         </section>
-        <section className="gate-panel"><div className="section-title"><span>G</span><div><small>SYNTHETIC REGRESSION</small><h2>合成回归门禁</h2></div></div>
-          <div className="gate-score"><strong>{(props.quality?.metrics.recall_at_10 ?? 0).toFixed(3)}</strong><span title="前 10 个结果覆盖目标商品的比例">Recall@10</span></div><div className="gate-score"><strong>{(props.quality?.metrics.ndcg_at_10 ?? 0).toFixed(3)}</strong><span title="前 10 个结果的排序质量，越接近 1 越好">NDCG@10</span></div><div className="gate-score"><strong>{props.quality?.metrics.p95_latency_ms ?? 0}<em>ms</em></strong><span title="95% 的评测请求不超过该延迟">P95 / {props.quality?.spu_count ?? 0} SPU</span></div>
-          <p>{props.quality?.case_count ?? 0} 条规则生成场景 · 非人工金标 · {(props.quality?.metrics.filter_violations ?? 0) + (props.quality?.metrics.ad_policy_violations ?? 0)} 个硬过滤与广告策略违规</p>
-          <small title={props.quality?.catalog_version}>仅用于确定性回归，不代表线上搜索质量；数据时间 {props.quality?.generated_at?.slice(0, 10) ?? "—"}</small>
+        <section className="gate-panel"><div className="section-title"><span>G</span><div><small>HUMAN-AUTHORED REGRESSION</small><h2>业务用例门禁</h2></div></div>
+          <div className="gate-score"><strong>{(props.quality?.metrics.category_recall_at_10 ?? 0).toFixed(3)}</strong><span title="前 10 个结果覆盖目标品类的比例">Category Recall@10</span></div><div className="gate-score"><strong>{(props.quality?.metrics.route_accuracy ?? 0).toFixed(3)}</strong><span title="自适应路由与人工预期模式一致的比例">Route Accuracy</span></div><div className="gate-score"><strong>{(props.quality?.metrics.clarification_f1 ?? 0).toFixed(3)}</strong><span title="该反问时反问、信息充分时不打断的综合指标">Clarification F1</span></div><div className="gate-score"><strong>{props.quality?.metrics.p95_latency_ms ?? 0}<em>ms</em></strong><span title="95% 的离线决策请求不超过该延迟">P95 / {props.quality?.spu_count ?? 0} SPU</span></div>
+          <p>{props.quality?.case_count ?? 0} 条人工编写业务场景 · {(props.quality?.metrics.hard_constraint_violations ?? 0) + (props.quality?.metrics.ad_policy_violations ?? 0)} 个硬约束与广告策略违规</p>
+          <small title={props.quality?.catalog_version}>用于可复现回归，不等同于线上推荐质量；评测时间 {props.quality?.generated_at?.slice(0, 10) ?? "—"}</small>
         </section>
         <section className="privacy-panel"><div className="section-title"><span>P</span><div><small>PRIVACY CONTROL</small><h2>个性化开关</h2></div></div>
           <p>匿名身份由服务端签发。关闭后，召回不会使用会话、短期或长期亲和信号。</p>

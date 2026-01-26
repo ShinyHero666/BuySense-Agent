@@ -1,0 +1,15 @@
+[
+  {"id":"phone-iphone-16","name":"iPhone 16","category":"phone","brand":"Apple","price":5299,"tags":["photography","office","续航"],"qualityScore":0.93,"popularityScore":0.96,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"apple-usbc"},
+  {"id":"phone-xiaomi-15","name":"Xiaomi 15","category":"phone","brand":"Xiaomi","price":4299,"tags":["photography","gaming","高刷"],"qualityScore":0.91,"popularityScore":0.90,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"android-usbc"},
+  {"id":"phone-vivo-x200","name":"vivo X200","category":"phone","brand":"vivo","price":3999,"tags":["photography","续航"],"qualityScore":0.89,"popularityScore":0.86,"sponsored":true,"bidScore":0.82,"compatibilityGroup":"android-usbc"},
+  {"id":"phone-honor-magic7","name":"Honor Magic7","category":"phone","brand":"Honor","price":3799,"tags":["photography","office"],"qualityScore":0.87,"popularityScore":0.82,"sponsored":true,"bidScore":0.76,"compatibilityGroup":"android-usbc"},
+  {"id":"headphones-airpods4","name":"AirPods 4 ANC","category":"headphones","brand":"Apple","price":1399,"tags":["降噪","office"],"qualityScore":0.91,"popularityScore":0.95,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"apple-usbc"},
+  {"id":"headphones-buds5","name":"Xiaomi Buds 5 Pro","category":"headphones","brand":"Xiaomi","price":999,"tags":["降噪","gaming"],"qualityScore":0.87,"popularityScore":0.82,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"android-usbc"},
+  {"id":"headphones-freebuds","name":"FreeBuds Pro 4","category":"headphones","brand":"Huawei","price":1299,"tags":["降噪","office"],"qualityScore":0.89,"popularityScore":0.87,"sponsored":true,"bidScore":0.71,"compatibilityGroup":"universal"},
+  {"id":"charger-apple-30w","name":"Apple 30W USB-C Charger","category":"charger","brand":"Apple","price":299,"tags":["快充"],"qualityScore":0.90,"popularityScore":0.85,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"apple-usbc"},
+  {"id":"charger-anker-67w","name":"Anker 67W GaN Charger","category":"charger","brand":"Anker","price":259,"tags":["快充","出差"],"qualityScore":0.92,"popularityScore":0.88,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"universal"},
+  {"id":"charger-xiaomi-67w","name":"Xiaomi 67W Charger","category":"charger","brand":"Xiaomi","price":169,"tags":["快充"],"qualityScore":0.86,"popularityScore":0.84,"sponsored":true,"bidScore":0.68,"compatibilityGroup":"android-usbc"},
+  {"id":"laptop-legion","name":"Lenovo Legion R7000","category":"laptop","brand":"Lenovo","price":6499,"tags":["gaming","高刷"],"qualityScore":0.90,"popularityScore":0.89,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"universal"},
+  {"id":"mouse-gpro","name":"Logitech G Pro X Superlight","category":"mouse","brand":"Logitech","price":799,"tags":["gaming","电竞"],"qualityScore":0.92,"popularityScore":0.93,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"universal"},
+  {"id":"keyboard-keychron","name":"Keychron K8 Pro","category":"keyboard","brand":"Keychron","price":699,"tags":["gaming","office"],"qualityScore":0.88,"popularityScore":0.81,"sponsored":false,"bidScore":0.0,"compatibilityGroup":"universal"}
+]

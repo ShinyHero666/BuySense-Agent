@@ -1,17 +1,18 @@
 # BuySense 智购引擎 · 3C 商品智能决策与搜广推 Agent
 
-**BuySense** 是面向 3C 商品购买决策的多 Agent 搜广推平台。系统通过 React/ECharts 决策工作台、TypeScript/Pi 有界多 Agent 编排、Python 搜推算法数据面和 SQLite 运行状态，将意图理解、多路召回、确定性精排、广告保护、证据解释与离线评测组织为一条可运行链路。
+**BuySense** 是面向 3C 商品购买决策的自适应 AI 应用。当前 Java 17 主实现通过 Spring Boot、React/ECharts、确定性搜广推数据面与受限 Planner-Critic 角色，将意图理解、多路召回、融合排序、广告保护、套装优化、证据审核和离线评测组织为可运行链路。工作流与 Agent 按请求复杂度单路由执行，不在线上同步双跑。
 
-## 五分钟体验
+## 五分钟体验 Java 主实现
 
-完全第一次使用请从 [`START_HERE.md`](./START_HERE.md) 开始。默认离线模式不需要 GPU、ModelPort 或密钥：
+默认确定性模式不需要 GPU、ModelPort 或密钥：
 
-```bash
-bash code/scripts/run-sar-agent.sh --offline --check
-bash code/scripts/run-sar-agent.sh --offline
-```
+~~~bash
+cd code/java-control-plane
+mvn test
+mvn spring-boot:run
+~~~
 
-打开 `http://127.0.0.1:19090/`。连接真实本地千问时使用 `--local-qwen`。完整架构、V2 API 和质量门禁见 [`code/agent-control-plane/README.md`](./code/agent-control-plane/README.md)。
+打开 `http://127.0.0.1:19090/`。接入模型时通过环境变量连接 ModelPort。完整架构、真实 DeepSeek 基准、方案取舍和面试材料见 [`code/java-control-plane/docs/PROJECT_REVIEW_CN.md`](./code/java-control-plane/docs/PROJECT_REVIEW_CN.md)。原 TypeScript/Python 版本保留为学习与行为参考。
 
 ## V2 学习主线
 
@@ -20,6 +21,23 @@ bash code/scripts/run-sar-agent.sh --offline
 3. [代码导览](./docs/V2_CODE_TOUR.md)：跟踪 UI 到 Python 算法服务的一次请求。
 4. [六步实验](./docs/v2-labs/README.md)：从 Run/SSE 学到降级与评测。
 5. [首次运行排障](./docs/TROUBLESHOOTING.md)：处理版本、依赖、端口和 ModelPort 问题。
+
+## Java 17 可运行版
+
+[code/java-control-plane](./code/java-control-plane/README.md) 是当前的 Java
+重写入口。它保留 React/ECharts 工作台，将 Run/SSE、搜推广融合、全局套装约束、
+澄清短路、确认草案、ModelPort 角色调用和持久化状态迁到 Spring Boot：
+
+~~~bash
+cd code/java-control-plane
+mvn test
+mvn spring-boot:run
+~~~
+
+打开 http://127.0.0.1:19090/。默认使用文件型 H2 并以确定性离线模式运行；
+设置 MOYUAN_DB_URL 可切换 PostgreSQL，设置
+MOYUAN_MODELPORT_ENABLED=true 可通过 ModelPort 执行最多两次软角色调用。
+预算、品类、兼容性和广告门禁始终由确定性 Java 数据面执行，LLM 的澄清建议也必须通过策略门。
 
 ## 当前产品能力
 

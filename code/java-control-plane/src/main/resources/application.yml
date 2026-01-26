@@ -1,0 +1,40 @@
+server:
+  port: ${MOYUAN_PORT:19090}
+  shutdown: graceful
+
+spring:
+  application:
+    name: buysense-java
+  datasource:
+    url: ${MOYUAN_DB_URL:jdbc:h2:file:./data/buysense;MODE=PostgreSQL;AUTO_SERVER=TRUE;DATABASE_TO_LOWER=TRUE}
+    username: ${MOYUAN_DB_USERNAME:sa}
+    password: ${MOYUAN_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 8
+  flyway:
+    enabled: true
+  jackson:
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+buysense:
+  session-secret: ${MOYUAN_SESSION_SECRET:local-development-secret-change-me}
+  modelport:
+    enabled: ${MOYUAN_MODELPORT_ENABLED:false}
+    base-url: ${MOYUAN_MODELPORT_URL:http://127.0.0.1:38082}
+    api-key: ${MOYUAN_MODELPORT_KEY:dev-client-key}
+    model: ${MOYUAN_MODELPORT_MODEL:qwen-default}
+    connect-timeout: 1s
+    read-timeout: 4s
+    max-calls-per-run: 2
+    max-tokens-per-call: 256
+  domain:
+    default-bundle:
+      - phone
+      - headphones
+      - charger

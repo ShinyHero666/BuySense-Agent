@@ -98,6 +98,9 @@ main { grid-column: 2; min-width: 0; }
 .confirm-action { background: var(--amber); min-height: 42px; justify-content: center; }
 .quiet-action { min-height: 34px; }
 
+.clarification-banner { margin: -8px 0 24px; padding: 16px 20px; border-left: 3px solid var(--amber); background: rgba(244, 170, 75, .1); }
+.clarification-banner strong { color: #f6c577; } .clarification-banner p { margin: 5px 0 0; color: #dce8f1; }
+
 .decision-grid { display: grid; grid-template-columns: .82fr .78fr 1.4fr; border: 1px solid var(--line); }
 .decision-grid > section { min-height: 390px; padding: 23px; background: rgba(8, 22, 35, .82); }
 .decision-grid > section + section { border-left: 1px solid var(--line); }
