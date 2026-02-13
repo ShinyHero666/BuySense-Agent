@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "pack_id": "normal-3c-v1",
+  "display_name": "常规 3C 购买决策",
+  "description": "手机、耳机与充电配件的搜广推决策基线包。",
+  "workflow_id": "commerce-decision-v1",
+  "capability_profile_id": "commerce-bounded-v1",
+  "assets": {
+    "catalog": "normal_3c_catalog_v1.json",
+    "reviews": "normal_3c_review_aspects_v1.json",
+    "compatibility": "normal_3c_compatibility_graph_v1.json"
+  },
+  "category_requirements": {
+    "charger": {"connectors_any": ["usb-c"], "protocols_any": ["usb-pd", "pps"]},
+    "cable": {"connectors_any": ["usb-c"], "protocols_any": ["usb-pd", "pps"]}
+  },
+  "example_queries": [
+    "预算 7000 元，帮我搭配一套手机、耳机和充电器",
+    "不要广告，比较几款重视拍照和续航的手机"
+  ],
+  "default_category": "phone",
+  "primary_category": "phone",
+  "default_bundle_categories": ["phone", "headphones", "charger"],
+  "categories": [
+    {"id": "phone", "label": "手机", "terms": ["手机", "iphone", "安卓"]},
+    {"id": "headphones", "label": "耳机", "terms": ["耳机", "降噪", "音质"]},
+    {"id": "charger", "label": "充电器", "terms": ["充电器", "充电头", "快充"]},
+    {"id": "cable", "label": "线材", "terms": ["数据线", "充电线"]},
+    {"id": "case", "label": "保护壳", "terms": ["手机壳", "保护壳"]}
+  ],
+  "use_cases": ["拍照", "续航", "游戏", "通勤", "音质", "降噪", "快充", "便携", "人像", "夜景", "长焦", "视频", "创作", "低延迟", "多口", "旅行", "耐用", "防摔"],
+  "brands": [
+    {"name": "Apple", "terms": ["苹果", "apple", "iphone"]},
+    {"name": "Xiaomi", "terms": ["小米", "xiaomi"]},
+    {"name": "HONOR", "terms": ["荣耀", "honor"]},
+    {"name": "Huawei", "terms": ["华为", "huawei"]},
+    {"name": "Samsung", "terms": ["三星", "samsung"]},
+    {"name": "OPPO", "terms": ["oppo"]},
+    {"name": "vivo", "terms": ["vivo"]},
+    {"name": "Soundcore", "terms": ["soundcore"]},
+    {"name": "UGREEN", "terms": ["绿联", "ugreen"]},
+    {"name": "Baseus", "terms": ["倍思", "baseus"]},
+    {"name": "Anker", "terms": ["安克", "anker"]},
+    {"name": "Nova", "terms": ["nova"]},
+    {"name": "Lumina", "terms": ["lumina"]},
+    {"name": "Atlas", "terms": ["atlas"]},
+    {"name": "Endura", "terms": ["endura"]},
+    {"name": "GameCore", "terms": ["gamecore"]},
+    {"name": "Compact", "terms": ["compact"]},
+    {"name": "ClearSound", "terms": ["clearsound"]},
+    {"name": "StudioPods", "terms": ["studiopods"]},
+    {"name": "VoltEdge", "terms": ["voltedge"]},
+    {"name": "TravelCube", "terms": ["travelcube"]},
+    {"name": "Moyuan", "terms": ["墨圆", "moyuan"]}
+  ],
+  "protocol_terms": ["usb-c", "gan", "蓝牙", "usb-pd", "pps"]
+}

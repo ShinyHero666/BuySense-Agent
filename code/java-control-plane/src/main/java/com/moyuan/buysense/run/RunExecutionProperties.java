@@ -8,7 +8,7 @@ import java.time.Duration;
 public record RunExecutionProperties(
         int maxConcurrent,
         int queueCapacity,
-        int maxActivePerSession,
+        int maxActivePerIdentity,
         int maxCreatedPerMinute,
         Duration leaseDuration,
         Duration proposalTtl,
@@ -17,7 +17,7 @@ public record RunExecutionProperties(
     public RunExecutionProperties {
         maxConcurrent = positive(maxConcurrent, 16, "maxConcurrent");
         queueCapacity = positive(queueCapacity, 256, "queueCapacity");
-        maxActivePerSession = positive(maxActivePerSession, 3, "maxActivePerSession");
+        maxActivePerIdentity = positive(maxActivePerIdentity, 3, "maxActivePerIdentity");
         maxCreatedPerMinute = positive(maxCreatedPerMinute, 30, "maxCreatedPerMinute");
         leaseDuration = positive(leaseDuration, Duration.ofMinutes(2), "leaseDuration");
         proposalTtl = positive(proposalTtl, Duration.ofMinutes(15), "proposalTtl");

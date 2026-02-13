@@ -11,9 +11,9 @@ public class ModelPortProperties {
     private String apiKey = "dev-client-key";
     private String model = "qwen-default";
     private Duration connectTimeout = Duration.ofSeconds(1);
-    private Duration readTimeout = Duration.ofSeconds(4);
-    private int maxCallsPerRun = 2;
-    private int maxTokensPerCall = 256;
+    private Duration readTimeout = Duration.ofSeconds(45);
+    private int maxCallsPerRun = 6;
+    private int maxTokensPerCall = 768;
 
     public boolean isEnabled() {
         return enabled;

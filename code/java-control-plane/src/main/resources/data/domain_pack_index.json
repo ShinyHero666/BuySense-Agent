@@ -1,0 +1,5 @@
+{
+  "schema_version": "1.0",
+  "default_pack_id": "normal-3c-v1",
+  "packs": [{"pack_id": "normal-3c-v1", "resource": "data/normal_3c_domain_v1.json"}, {"pack_id": "outdoor-camping-v1", "resource": "data/outdoor_camping_domain_v1.json"}]
+}

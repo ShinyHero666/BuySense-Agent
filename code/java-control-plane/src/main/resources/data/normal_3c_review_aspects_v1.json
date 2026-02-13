@@ -1,0 +1,166 @@
+{
+  "review_snapshot_version": "review-aspects-v1",
+  "generated_at": "2026-08-01T00:00:00Z",
+  "products": [
+    {
+      "product_id": "spu-iphone-15",
+      "sample_size": 1280,
+      "aspects": [
+        {"aspect": "拍照", "sentiment": 0.86, "mention_count": 438, "confidence": 0.94, "summary": "多数样本认可日常拍照稳定和视频表现。"},
+        {"aspect": "续航", "sentiment": 0.58, "mention_count": 301, "confidence": 0.9, "summary": "续航评价整体正向，但重度使用反馈存在差异。"}
+      ]
+    },
+    {
+      "product_id": "spu-xiaomi-14",
+      "sample_size": 980,
+      "aspects": [
+        {"aspect": "拍照", "sentiment": 0.82, "mention_count": 352, "confidence": 0.92, "summary": "人像和夜景是高频正向反馈。"},
+        {"aspect": "快充", "sentiment": 0.9, "mention_count": 416, "confidence": 0.95, "summary": "快充速度获得一致性较高的正向评价。"}
+      ]
+    },
+    {
+      "product_id": "spu-honor-200",
+      "sample_size": 760,
+      "aspects": [
+        {"aspect": "人像", "sentiment": 0.88, "mention_count": 298, "confidence": 0.93, "summary": "人像效果是评论中最稳定的正向主题。"},
+        {"aspect": "续航", "sentiment": 0.74, "mention_count": 244, "confidence": 0.89, "summary": "多数样本认为日常续航和充电组合较均衡。"}
+      ]
+    },
+    {
+      "product_id": "spu-airpods-pro-2",
+      "sample_size": 1540,
+      "aspects": [
+        {"aspect": "降噪", "sentiment": 0.91, "mention_count": 688, "confidence": 0.97, "summary": "通勤降噪是最集中的正向反馈。"},
+        {"aspect": "佩戴", "sentiment": 0.62, "mention_count": 405, "confidence": 0.9, "summary": "佩戴评价偏正向，但耳型差异带来分化。"}
+      ]
+    },
+    {
+      "product_id": "spu-soundcore-liberty",
+      "sample_size": 830,
+      "aspects": [
+        {"aspect": "性价比", "sentiment": 0.89, "mention_count": 372, "confidence": 0.94, "summary": "价格与降噪组合是主要推荐原因。"},
+        {"aspect": "降噪", "sentiment": 0.72, "mention_count": 318, "confidence": 0.91, "summary": "多数样本认可通勤场景降噪，极端噪声表现一般。"}
+      ]
+    },
+    {
+      "product_id": "spu-xiaomi-buds-pro",
+      "sample_size": 610,
+      "aspects": [
+        {"aspect": "降噪", "sentiment": 0.76, "mention_count": 251, "confidence": 0.9, "summary": "降噪和安卓设备协同获得较多正向评价。"},
+        {"aspect": "连接", "sentiment": 0.68, "mention_count": 174, "confidence": 0.86, "summary": "连接稳定性整体正向，跨品牌体验略有差异。"}
+      ]
+    },
+    {
+      "product_id": "spu-apple-charger-20w",
+      "sample_size": 720,
+      "aspects": [
+        {"aspect": "兼容", "sentiment": 0.87, "mention_count": 290, "confidence": 0.94, "summary": "USB-PD 设备兼容反馈稳定。"},
+        {"aspect": "便携", "sentiment": 0.81, "mention_count": 205, "confidence": 0.91, "summary": "体积和携带便利性是高频优点。"}
+      ]
+    },
+    {
+      "product_id": "spu-ugreen-gan-65w",
+      "sample_size": 920,
+      "aspects": [
+        {"aspect": "多设备", "sentiment": 0.85, "mention_count": 361, "confidence": 0.93, "summary": "多口和多设备出行场景评价较好。"},
+        {"aspect": "发热", "sentiment": 0.18, "mention_count": 222, "confidence": 0.87, "summary": "部分高负载样本提到发热，观点分布较分散。"}
+      ]
+    },
+    {
+      "product_id": "spu-xiaomi-charger-90w",
+      "sample_size": 540,
+      "aspects": [
+        {"aspect": "快充", "sentiment": 0.93, "mention_count": 267, "confidence": 0.95, "summary": "同品牌设备快充表现是主要正向证据。"},
+        {"aspect": "通用性", "sentiment": 0.51, "mention_count": 146, "confidence": 0.84, "summary": "通用协议可用，但跨品牌功率表现存在差异。"}
+      ]
+    },
+    {
+      "product_id": "spu-camera-battery-charger",
+      "sample_size": 120,
+      "aspects": [
+        {"aspect": "专用性", "sentiment": 0.7, "mention_count": 62, "confidence": 0.81, "summary": "适配指定相机电池时反馈正向，不适用于手机充电。"},
+        {"aspect": "兼容", "sentiment": -0.64, "mention_count": 44, "confidence": 0.83, "summary": "评论明确反映其接口不具备手机通用性。"}
+      ]
+    },
+    {
+      "product_id": "spu-nova-creator-ultra",
+      "sample_size": 640,
+      "aspects": [
+        {"aspect": "拍照", "sentiment": 0.94, "mention_count": 338, "confidence": 0.96, "summary": "离线合成样本中，主摄防抖、长焦和夜景覆盖是最稳定的推荐理由。"},
+        {"aspect": "重量", "sentiment": 0.36, "mention_count": 142, "confidence": 0.88, "summary": "影像模组带来更高重量，不适合只追求轻薄的用户。"}
+      ]
+    },
+    {
+      "product_id": "spu-lumina-portrait-x7-pro",
+      "sample_size": 582,
+      "aspects": [
+        {"aspect": "人像", "sentiment": 0.93, "mention_count": 304, "confidence": 0.95, "summary": "离线合成样本认可人像焦段、肤色和室内成片稳定性。"},
+        {"aspect": "游戏", "sentiment": 0.48, "mention_count": 96, "confidence": 0.82, "summary": "散热配置面向日常使用，不是长时间重载游戏取向。"}
+      ]
+    },
+    {
+      "product_id": "spu-atlas-zoom-pro",
+      "sample_size": 514,
+      "aspects": [
+        {"aspect": "长焦", "sentiment": 0.92, "mention_count": 267, "confidence": 0.95, "summary": "远景和舞台拍摄是合成评价中最突出的优势。"},
+        {"aspect": "便携", "sentiment": 0.42, "mention_count": 117, "confidence": 0.85, "summary": "潜望长焦使机身厚度和重量高于轻薄机型。"}
+      ]
+    },
+    {
+      "product_id": "spu-endura-max",
+      "sample_size": 706,
+      "aspects": [
+        {"aspect": "续航", "sentiment": 0.95, "mention_count": 421, "confidence": 0.97, "summary": "大电池和低功耗屏幕在差旅场景中的续航反馈稳定。"},
+        {"aspect": "拍照", "sentiment": 0.56, "mention_count": 138, "confidence": 0.84, "summary": "影像足以记录，但不属于以长焦和夜景为主的旗舰方案。"}
+      ]
+    },
+    {
+      "product_id": "spu-gamecore-g1",
+      "sample_size": 624,
+      "aspects": [
+        {"aspect": "游戏", "sentiment": 0.94, "mention_count": 389, "confidence": 0.96, "summary": "高刷、散热和触控延迟是离线样本中的核心正向证据。"},
+        {"aspect": "拍照", "sentiment": 0.41, "mention_count": 121, "confidence": 0.85, "summary": "影像配置只满足日常记录，不适合作为拍照优先候选。"}
+      ]
+    },
+    {
+      "product_id": "spu-compact-s",
+      "sample_size": 488,
+      "aspects": [
+        {"aspect": "轻便", "sentiment": 0.92, "mention_count": 278, "confidence": 0.95, "summary": "单手握持和旅行收纳是合成样本中的集中优势。"},
+        {"aspect": "游戏", "sentiment": 0.39, "mention_count": 87, "confidence": 0.82, "summary": "小尺寸散热空间有限，不适合持续高负载游戏。"}
+      ]
+    },
+    {
+      "product_id": "spu-clearsound-travel-anc",
+      "sample_size": 552,
+      "aspects": [
+        {"aspect": "降噪", "sentiment": 0.9, "mention_count": 316, "confidence": 0.94, "summary": "通勤和旅行噪声抑制是离线合成评价中的主要优势。"},
+        {"aspect": "音质", "sentiment": 0.64, "mention_count": 174, "confidence": 0.87, "summary": "调音偏耐听，解析力并非监听级取向。"}
+      ]
+    },
+    {
+      "product_id": "spu-studiopods-creator",
+      "sample_size": 438,
+      "aspects": [
+        {"aspect": "创作", "sentiment": 0.91, "mention_count": 239, "confidence": 0.94, "summary": "低延迟和中性调音适合视频剪辑与素材审听。"},
+        {"aspect": "降噪", "sentiment": 0.54, "mention_count": 103, "confidence": 0.83, "summary": "主动降噪只覆盖日常环境，不是强降噪取向。"}
+      ]
+    },
+    {
+      "product_id": "spu-voltedge-gan-65w",
+      "sample_size": 476,
+      "aspects": [
+        {"aspect": "兼容", "sentiment": 0.93, "mention_count": 266, "confidence": 0.95, "summary": "USB-PD 与 PPS 对手机和平板的兼容反馈稳定。"},
+        {"aspect": "多口", "sentiment": 0.78, "mention_count": 188, "confidence": 0.9, "summary": "双口方便旅行，但同时使用会发生功率分配。"}
+      ]
+    },
+    {
+      "product_id": "spu-travelcube-45w",
+      "sample_size": 392,
+      "aspects": [
+        {"aspect": "便携", "sentiment": 0.94, "mention_count": 231, "confidence": 0.96, "summary": "小体积和折叠插脚是通勤旅行中的集中优势。"},
+        {"aspect": "功率", "sentiment": 0.52, "mention_count": 104, "confidence": 0.84, "summary": "45W 适合手机和平板，不覆盖高功率笔记本需求。"}
+      ]
+    }
+  ]
+}

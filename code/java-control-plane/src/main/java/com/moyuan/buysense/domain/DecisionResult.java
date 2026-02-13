@@ -25,8 +25,8 @@ public record DecisionResult(
 
     public static ModelRuntime offlineRuntime() {
         return new ModelRuntime(
-                "workflow",
-                "deterministic-sar-engine",
+                "replay",
+                "deterministic-replay",
                 0,
                 0,
                 0,
@@ -34,10 +34,8 @@ public record DecisionResult(
                 null,
                 null,
                 null,
-                List.of("deterministic_baseline"),
                 null,
-                false,
-                null);
+                false);
     }
 
     public record BundleProposal(
@@ -64,10 +62,8 @@ public record DecisionResult(
             String rewrittenQuery,
             String intent,
             String explanation,
-            List<String> routeReasons,
             String criticVerdict,
-            boolean replanned,
-            String clarificationQuestion
+            boolean revisionApplied
     ) {
     }
 }

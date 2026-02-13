@@ -56,10 +56,10 @@ class AgentControllerTest {
     }
 
     @Test
-    void incompleteRequestStopsBeforeRetrievalAndReturnsClarification() throws Exception {
+    void sparseRequestStillRunsTheBoundedCollaborationChain() throws Exception {
         var creation = mvc.perform(post("/api/v2/runs")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Idempotency-Key", "clarification-contract")
+                        .header("Idempotency-Key", "single-chain-contract")
                         .content("""
                                 {"message":"预算5000元，适合我就行","confirmed":false}
                                 """))
@@ -70,15 +70,14 @@ class AgentControllerTest {
                 .path("runId").asText();
 
         JsonNode completed = awaitTerminalRun(runId, cookie);
-        assertThat(completed.at("/result/phase").asText()).isEqualTo("clarification");
-        assertThat(completed.at("/result/message").asText()).isNotBlank();
-        assertThat(completed.at("/result/decision/slate").size()).isZero();
-        assertThat(completed.at("/result/decision/runtime/mode").asText()).isEqualTo("hybrid");
+        assertThat(completed.at("/result/phase").asText())
+                .isIn("proposal", "needs_replan");
+        assertThat(completed.at("/result/decision/runtime/mode").asText()).isEqualTo("replay");
         assertThat(runs.require(runId).getEvents().stream()
-                .noneMatch(event -> "data_plane_result".equals(event.payload().get("event"))))
+                .anyMatch(event -> "data_plane_result".equals(event.payload().get("event"))))
                 .isTrue();
         assertThat(runs.require(runId).getEvents().stream()
-                .anyMatch(event -> "clarification_question".equals(
+                .noneMatch(event -> "clarification_question".equals(
                         event.payload().get("artifactType"))))
                 .isTrue();
     }
@@ -102,7 +101,7 @@ class AgentControllerTest {
         assertThat(completed.path("status").asText()).isEqualTo("completed");
         assertThat(completed.at("/result/phase").asText()).isEqualTo("proposal");
         assertThat(completed.at("/result/decision/plan/intent").asText())
-                .isEqualTo("bundle_recommendation");
+                .isEqualTo("bundle");
         assertThat(completed.at("/result/decision/plan/requirements/budgetMax").decimalValue())
                 .isEqualByComparingTo("7000");
         assertThat(completed.at("/result/decision/slate").isArray()).isTrue();
@@ -110,7 +109,7 @@ class AgentControllerTest {
         assertThat(completed.at("/result/decision/bundle/items").size()).isEqualTo(3);
         assertThat(completed.at("/result/decision/bundle/withinBudget").asBoolean()).isTrue();
         assertThat(completed.at("/result/decision/critique/verdict").asText()).isEqualTo("approved");
-        assertThat(completed.at("/result/decision/runtime/mode").asText()).isEqualTo("hybrid");
+        assertThat(completed.at("/result/decision/runtime/mode").asText()).isEqualTo("replay");
 
         assertThat(runs.require(runId).getEvents().stream().map(RunEvent::eventType).toList())
                 .contains("run_created", "run_started", "task", "artifact", "policy_gate", "result");
@@ -147,7 +146,7 @@ class AgentControllerTest {
                         .cookie(cookie)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"personalizationEnabled":false,"preferredBrand":"Apple"}
+                                {"personalizationEnabled":false}
                                 """))
                 .andExpect(status().isOk());
 
@@ -170,20 +169,22 @@ class AgentControllerTest {
         assertThat(replay.path("idempotentReplay").asBoolean()).isTrue();
         JsonNode preference = getJson("/api/v2/preferences", cookie);
         assertThat(preference.path("personalizationEnabled").asBoolean()).isFalse();
-        assertThat(preference.path("preferredBrand").asText()).isEqualTo("Apple");
+        assertThat(preference.has("preferredBrand")).isFalse();
 
         JsonNode metrics = getJson("/metrics", cookie);
         assertThat(metrics.at("/northStar/denominator").asLong()).isGreaterThan(0);
         assertThat(metrics.at("/layers/constraint/qualifiedDecisionRate").isNumber()).isTrue();
 
         JsonNode health = getJson("/health", cookie);
+        assertThat(health.path("status").asText()).isEqualTo("up");
+        assertThat(health.at("/dataPlane/mode").asText()).isEqualTo("java");
         assertThat(health.at("/dataPlane/status").asText()).isEqualTo("embedded");
-        assertThat(health.path("paymentEnabled").asBoolean()).isFalse();
+        assertThat(health.at("/dataPlane/retailSources/catalog/status").asText()).isEqualTo("up");
 
         JsonNode quality = getJson("/api/v2/quality", cookie);
         assertThat(quality.path("evaluation_kind").asText())
-                .isEqualTo("human_authored_business_cases");
-        assertThat(quality.path("case_count").asInt()).isEqualTo(40);
+                .isEqualTo("synthetic_deterministic_regression");
+        assertThat(quality.path("case_count").asInt()).isEqualTo(120);
         assertThat(quality.path("passed").asBoolean()).isTrue();
 
         String index = mvc.perform(get("/index.html")).andExpect(status().isOk())

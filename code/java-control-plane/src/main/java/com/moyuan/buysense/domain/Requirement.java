@@ -2,64 +2,46 @@ package com.moyuan.buysense.domain;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Set;
 
 public record Requirement(
         String originalQuery,
         String retrievalQuery,
         BigDecimal budget,
-        Set<String> requiredCategories,
-        Set<String> preferredCategories,
+        List<String> requiredCategories,
+        List<String> preferredBrands,
         List<String> useCases,
         List<Constraint> constraints,
         boolean sponsoredAllowed,
-        boolean bundleRequested,
-        String preferredBrand
+        boolean bundleRequested
 ) {
     public Requirement {
-        requiredCategories = Set.copyOf(requiredCategories);
-        preferredCategories = Set.copyOf(preferredCategories);
+        requiredCategories = List.copyOf(requiredCategories);
+        preferredBrands = List.copyOf(preferredBrands);
         useCases = List.copyOf(useCases);
         constraints = List.copyOf(constraints);
-        preferredBrand = preferredBrand == null ? "" : preferredBrand.trim();
-    }
-
-    public Requirement(
-            String originalQuery,
-            String retrievalQuery,
-            BigDecimal budget,
-            Set<String> requiredCategories,
-            Set<String> preferredCategories,
-            List<String> useCases,
-            List<Constraint> constraints,
-            boolean sponsoredAllowed,
-            boolean bundleRequested
-    ) {
-        this(originalQuery, retrievalQuery, budget, requiredCategories, preferredCategories,
-                useCases, constraints, sponsoredAllowed, bundleRequested, "");
-    }
-
-    public Requirement withPreferredBrand(String brand) {
-        return new Requirement(
-                originalQuery, retrievalQuery, budget, requiredCategories, preferredCategories,
-                useCases, constraints, sponsoredAllowed, bundleRequested, brand);
     }
 
     public enum ConstraintSource {
-        USER, MODEL, SYSTEM, CATALOG
+        EXPLICIT_USER, INFERRED_MODEL, CATALOG, SYSTEM
     }
 
     public enum ConstraintStrength {
         HARD, SOFT
     }
 
+    public enum ConstraintStatus {
+        ACTIVE, SUPERSEDED, CONFLICTED
+    }
+
     public record Constraint(
+            String constraintId,
             String field,
-            String operator,
             Object value,
             ConstraintSource source,
             ConstraintStrength strength,
-            double confidence
+            double confidence,
+            String turnId,
+            ConstraintStatus status
     ) {
     }
 }

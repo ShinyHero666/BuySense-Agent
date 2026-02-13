@@ -1,6 +1,6 @@
 package com.moyuan.buysense.run;
 
-import com.moyuan.buysense.agent.AdaptiveDecisionService;
+import com.moyuan.buysense.agent.SearchAdsRecsLeadService;
 import com.moyuan.buysense.agent.ModelPortAgentBridge;
 import com.moyuan.buysense.domain.Candidate;
 import com.moyuan.buysense.domain.DecisionResult;
@@ -33,11 +33,10 @@ public class RunService {
     private final Map<String, AgentRun> runs = new ConcurrentHashMap<>();
     private final Map<String, CopyOnWriteArrayList<SseEmitter>> subscribers = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> sequences = new ConcurrentHashMap<>();
-    private final AdaptiveDecisionService decisionService;
+    private final SearchAdsRecsLeadService decisionService;
     private final ModelPortAgentBridge modelPort;
     private final RetailDataGateway retail;
     private final RunRepository repository;
-    private final PreferenceStore preferences;
     private final RunExecutionProperties executionProperties;
     private final Executor executor;
     private final String workerId = UUID.randomUUID().toString();
@@ -45,11 +44,10 @@ public class RunService {
     private final Set<String> submittedRuns = ConcurrentHashMap.newKeySet();
 
     public RunService(
-            AdaptiveDecisionService decisionService,
+            SearchAdsRecsLeadService decisionService,
             ModelPortAgentBridge modelPort,
             RetailDataGateway retail,
             RunRepository repository,
-            PreferenceStore preferences,
             RunExecutionProperties executionProperties,
             @Qualifier("agentExecutor") Executor executor
     ) {
@@ -57,7 +55,6 @@ public class RunService {
         this.modelPort = modelPort;
         this.retail = retail;
         this.repository = repository;
-        this.preferences = preferences;
         this.executionProperties = executionProperties;
         this.executor = executor;
     }
@@ -102,57 +99,107 @@ public class RunService {
             String workflowId,
             String proposalRunId
     ) {
+        return create("id_" + sessionId, sessionId, idempotencyKey, message,
+                confirmationRequested, domainPackId, workflowId, proposalRunId);
+    }
+
+    public synchronized Creation create(
+            String identityId,
+            String sessionId,
+            String idempotencyKey,
+            String message,
+            boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
         if (confirmationRequested && (proposalRunId == null || proposalRunId.isBlank())) {
             throw new RunContractException("proposal_run_not_found", "confirmation requires proposalRunId");
         }
 
-        var existing = repository.findIdempotentRun(sessionId, idempotencyKey);
+        String requestFingerprint = repository.requestFingerprint(
+                message, confirmationRequested, domainPackId, workflowId, proposalRunId);
+        var existing = repository.findIdempotentRun(identityId, idempotencyKey);
         if (existing.isPresent()) {
-            AgentRun replay = requireOwned(existing.get(), sessionId);
-            if (!sameCreation(replay, message, confirmationRequested, domainPackId, workflowId, proposalRunId)) {
+            AgentRun replay = requireOwned(existing.get(), identityId);
+            if (!repository.idempotencyMatches(identityId, idempotencyKey, requestFingerprint)) {
                 throw new RunContractException("idempotency_key_reused", "idempotency key is bound to another request");
             }
             return new Creation(replay, true);
         }
 
         if (confirmationRequested) {
-            validateProposal(sessionId, domainPackId, workflowId, proposalRunId);
-            var existingConfirmation = repository.findConfirmationByProposal(proposalRunId);
+            var existingConfirmation = repository.findConfirmationByProposal(identityId, proposalRunId);
             if (existingConfirmation.isPresent()) {
-                AgentRun replay = requireOwned(existingConfirmation.get(), sessionId);
+                AgentRun replay = requireOwned(existingConfirmation.get(), identityId);
                 if (!replay.getDomainPackId().equals(domainPackId)
-                        || !replay.getWorkflowId().equals(workflowId)) {
+                        || !replay.getWorkflowId().equals(workflowId)
+                        || !replay.getSessionId().equals(sessionId)) {
                     throw new RunContractException(
                             "proposal_extension_mismatch",
                             "proposal extension does not match");
                 }
+                if (("failed".equals(replay.getStatus()) || "cancelled".equals(replay.getStatus()))
+                        && proposalIsRetryable(identityId, domainPackId, workflowId, proposalRunId)) {
+                    repository.resetConfirmationForRetry(
+                            replay, idempotencyKey, requestFingerprint);
+                    emit(replay, "run_created", Map.of(
+                            "event", "run_created",
+                            "role", "lead",
+                            "domainPackId", domainPackId,
+                            "workflowId", workflowId,
+                            "proposalRunId", proposalRunId,
+                            "retry", true,
+                            "status", "queued"));
+                    submit(replay, false);
+                    return new Creation(replay, false);
+                }
+                repository.addIdempotencyAlias(
+                        identityId, idempotencyKey, replay.getRunId(), requestFingerprint);
                 return new Creation(replay, true);
             }
+            validateProposal(identityId, domainPackId, workflowId, proposalRunId);
         }
 
         AgentRun run = new AgentRun(
                 UUID.randomUUID().toString(),
+                identityId,
                 sessionId,
                 message,
                 confirmationRequested,
                 domainPackId,
                 workflowId,
-                proposalRunId);
+                proposalRunId,
+                idempotencyKey);
+        RunEvent createdEvent = new RunEvent(
+                UUID.randomUUID().toString(),
+                run.getRunId(),
+                1,
+                "run_created",
+                Instant.now(),
+                Map.of(
+                        "event", "run_created",
+                        "role", "lead",
+                        "domainPackId", domainPackId,
+                        "workflowId", workflowId,
+                        "status", "queued"));
+        run.addEvent(createdEvent);
         try {
-            repository.insertAdmitted(run, idempotencyKey, executionProperties, Instant.now());
+            repository.insertAdmitted(
+                    run, idempotencyKey, executionProperties, Instant.now(), createdEvent);
         } catch (RunRepository.AdmissionRejectedException rejected) {
             String reason = switch (rejected.code()) {
-                case "session_concurrency_limit" -> "too many active runs for this session";
-                case "session_rate_limit" -> "too many runs created during the last minute";
+                case "identity_concurrency_limit" -> "too many active runs for this identity";
+                case "identity_rate_limit" -> "too many runs created during the last minute";
                 default -> "global run queue is full";
             };
             throw new RunCapacityException(rejected.code(), reason, rejected.overloaded());
         } catch (DuplicateKeyException race) {
-            var idempotentWinner = repository.findIdempotentRun(sessionId, idempotencyKey);
+            var idempotentWinner = repository.findIdempotentRun(identityId, idempotencyKey);
             if (idempotentWinner.isPresent()) {
-                AgentRun replay = requireOwned(idempotentWinner.get(), sessionId);
-                if (!sameCreation(replay, message, confirmationRequested,
-                        domainPackId, workflowId, proposalRunId)) {
+                AgentRun replay = requireOwned(idempotentWinner.get(), identityId);
+                if (!repository.idempotencyMatches(
+                        identityId, idempotencyKey, requestFingerprint)) {
                     throw new RunContractException(
                             "idempotency_key_reused",
                             "idempotency key is bound to another request");
@@ -160,22 +207,17 @@ public class RunService {
                 return new Creation(replay, true);
             }
             if (confirmationRequested) {
-                var confirmationWinner = repository.findConfirmationByProposal(proposalRunId);
+                var confirmationWinner = repository.findConfirmationByProposal(identityId, proposalRunId);
                 if (confirmationWinner.isPresent()) {
                     return new Creation(
-                            requireOwned(confirmationWinner.get(), sessionId),
+                            requireOwned(confirmationWinner.get(), identityId),
                             true);
                 }
             }
             throw race;
         }
         cache(run);
-        emit(run, "run_created", Map.of(
-                "event", "run_created",
-                "role", "lead",
-                "domainPackId", domainPackId,
-                "workflowId", workflowId,
-                "status", "queued"));
+        publish(run, createdEvent);
         submit(run, false);
         return new Creation(run, false);
     }
@@ -190,38 +232,23 @@ public class RunService {
         return run;
     }
 
-    public AgentRun requireOwned(String runId, String sessionId) {
+    public AgentRun requireOwned(String runId, String identityId) {
         AgentRun run = require(runId);
-        if (!run.getSessionId().equals(sessionId)) {
+        if (!run.getIdentityId().equals(identityId)) {
             throw new NoSuchElementException("run not found: " + runId);
         }
         return run;
     }
 
-    private boolean sameCreation(
-            AgentRun run,
-            String message,
-            boolean confirmationRequested,
-            String domainPackId,
-            String workflowId,
-            String proposalRunId
-    ) {
-        return run.getMessage().equals(message)
-                && run.isConfirmationRequested() == confirmationRequested
-                && run.getDomainPackId().equals(domainPackId)
-                && run.getWorkflowId().equals(workflowId)
-                && java.util.Objects.equals(run.getProposalRunId(), proposalRunId);
-    }
-
     private AgentRun validateProposal(
-            String sessionId,
+            String identityId,
             String domainPackId,
             String workflowId,
             String proposalRunId
     ) {
         AgentRun proposal;
         try {
-            proposal = requireOwned(proposalRunId, sessionId);
+            proposal = requireOwned(proposalRunId, identityId);
         } catch (NoSuchElementException error) {
             throw new RunContractException("proposal_run_not_found", "proposal run was not found");
         }
@@ -240,6 +267,20 @@ public class RunService {
             throw new RunContractException("proposal_extension_mismatch", "proposal extension does not match");
         }
         return proposal;
+    }
+
+    private boolean proposalIsRetryable(
+            String identityId,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
+        try {
+            validateProposal(identityId, domainPackId, workflowId, proposalRunId);
+            return true;
+        } catch (RunContractException ignored) {
+            return false;
+        }
     }
 
     private void submit(AgentRun run, boolean recovering) {
@@ -352,16 +393,18 @@ public class RunService {
                         "cancelledRuns", snapshot.stream().filter(run -> run.getStatus().equals("cancelled")).count()));
     }
 
-    public void cancelOwned(String runId, String sessionId) {
-        cancel(requireOwned(runId, sessionId));
+    public AgentRun cancelOwned(String runId, String identityId) {
+        AgentRun run = requireOwned(runId, identityId);
+        cancel(run);
+        return run;
     }
 
     public void cancel(String runId) {
         cancel(require(runId));
     }
 
-    private void cancel(AgentRun run) {
-        if (isTerminal(run.getStatus())) return;
+    private AgentRun cancel(AgentRun run) {
+        if (isTerminal(run.getStatus())) return run;
         run.requestCancellation();
         RunEvent event = appendInMemory(run, "run_cancelled", Map.of(
                 "event", "run_cancelled",
@@ -371,10 +414,11 @@ public class RunService {
         repository.updateWithEvent(run, event);
         publish(run, event);
         completeSubscribers(run.getRunId());
+        return run;
     }
 
-    public SseEmitter subscribeOwned(String runId, String sessionId, long afterSequence) {
-        return subscribe(requireOwned(runId, sessionId), afterSequence);
+    public SseEmitter subscribeOwned(String runId, String identityId, long afterSequence) {
+        return subscribe(requireOwned(runId, identityId), afterSequence);
     }
 
     public SseEmitter subscribe(String runId, long afterSequence) {
@@ -383,20 +427,68 @@ public class RunService {
 
     private SseEmitter subscribe(AgentRun run, long afterSequence) {
         String runId = run.getRunId();
-        SseEmitter emitter = new SseEmitter(95_000L);
-        run.getEvents().stream()
-                .filter(event -> event.sequence() > afterSequence)
-                .forEach(event -> send(emitter, event));
-        if (isTerminal(run.getStatus())) {
-            emitter.complete();
-            return emitter;
-        }
+        SseEmitter emitter = new SseEmitter(0L);
         subscribers.computeIfAbsent(runId, ignored -> new CopyOnWriteArrayList<>()).add(emitter);
         emitter.onCompletion(() -> remove(runId, emitter));
         emitter.onTimeout(() -> remove(runId, emitter));
         emitter.onError(error -> remove(runId, emitter));
+
+        List<RunEvent> firstSnapshot = run.getEvents();
+        firstSnapshot.stream().filter(event -> event.sequence() > afterSequence)
+                .forEach(event -> send(emitter, event));
+        long replayedThrough = firstSnapshot.stream().mapToLong(RunEvent::sequence)
+                .max().orElse(afterSequence);
+        AgentRun latest = require(runId);
+        latest.getEvents().stream().filter(event -> event.sequence() > replayedThrough)
+                .forEach(event -> send(emitter, event));
+        if (isTerminal(latest.getStatus())) {
+            remove(runId, emitter);
+            emitter.complete();
+        }
         return emitter;
     }
+
+    @Scheduled(fixedDelay = 15_000L)
+    public void sendHeartbeats() {
+        subscribers.forEach((runId, emitters) -> emitters.forEach(emitter -> {
+            try {
+                emitter.send(SseEmitter.event().comment("heartbeat"));
+            } catch (IOException | IllegalStateException error) {
+                remove(runId, emitter);
+                emitter.complete();
+            }
+        }));
+    }
+
+    public AgentRun requireCartDraftOwned(String draftId, String sessionId) {
+        Instant now = Instant.now();
+        AgentRun run = runs.values().stream()
+                .filter(candidate -> candidate.getSessionId().equals(sessionId))
+                .filter(candidate -> candidate.getCartDraft() != null)
+                .filter(candidate -> candidate.getCartDraft().expiresAt().isAfter(now))
+                .filter(candidate -> candidate.getCartDraft().draftId().equals(draftId))
+                .findFirst().orElse(null);
+        if (run != null) return run;
+        return repository.findAll().stream()
+                .filter(candidate -> candidate.getSessionId().equals(sessionId))
+                .filter(candidate -> candidate.getCartDraft() != null)
+                .filter(candidate -> candidate.getCartDraft().expiresAt().isAfter(now))
+                .filter(candidate -> candidate.getCartDraft().draftId().equals(draftId))
+                .findFirst().orElseThrow(() -> new NoSuchElementException("cart draft not found"));
+    }
+
+    public Map<String, Integer> diagnosticsOwned(String runId, String identityId) {
+        List<RunEvent> events = requireOwned(runId, identityId).getEvents();
+        return Map.of(
+                "events", events.size(),
+                "tasks", (int) events.stream().filter(event -> event.eventType().equals("task")).count(),
+                "artifacts", (int) events.stream().filter(event -> event.eventType().equals("artifact")).count(),
+                "modelExecutions", (int) events.stream()
+                        .filter(event -> event.eventType().equals("model_execution")).count(),
+                "constraints", (int) events.stream()
+                        .filter(event -> "retrieval_plan".equals(event.payload().get("artifactType"))).count());
+    }
+
     private void execute(AgentRun run) {
         Instant leaseStarted = Instant.now();
         RunRepository.Lease lease = repository.acquireLease(
@@ -419,77 +511,57 @@ public class RunService {
                 executeConfirmation(run);
                 return;
             }
-            PreferenceStore.Preference preference = preferences.find(run.getSessionId());
-            String preferredBrand = preference.personalizationEnabled()
-                    ? preference.preferredBrand() : "";
-            var execution = decisionService.decide(
-                    run.getRunId(), run.getMessage(), run.getDomainPackId(), preferredBrand);
-            var requirement = execution.result().requirement();
-            emit(run, "artifact", Map.of(
-                    "event", "routing_decision",
-                    "role", "lead",
-                    "artifactType", "execution_route",
-                    "domainPackId", run.getDomainPackId(),
-                    "workflowId", run.getWorkflowId(),
-                    "mode", execution.route().mode().name().toLowerCase(),
-                    "reasons", execution.route().reasons(),
-                    "clarificationRecommended", execution.route().clarificationRecommended()));
-            if (execution.planner().attempted()) {
-                emit(run, "task", Map.of(
-                        "event", "task_delegated",
-                        "role", "lead",
-                        "to", "planner",
-                        "taskId", "intent"));
-                emitModelCall(run, execution.planner());
-            }
+            RunRepository.InteractionContext persistedContext = repository.discoveryContext(
+                    run.getIdentityId());
+            SearchAdsRecsLeadService.DiscoveryContext discoveryContext =
+                    new SearchAdsRecsLeadService.DiscoveryContext(
+                            run.getIdentityId(),
+                            run.getSessionId(),
+                            persistedContext.personalizationEnabled(),
+                            persistedContext.recentProductIds(),
+                            persistedContext.excludedProductIds(),
+                            persistedContext.adExposureProductIds());
+            SearchAdsRecsLeadService.Execution execution = decisionService.decide(
+                    run.getRunId(), run.getMessage(), run.getDomainPackId(), discoveryContext);
+            DecisionResult result = execution.result();
+            var requirement = result.requirement();
+
             emit(run, "artifact", Map.of(
                     "event", "artifact_published",
-                    "role", "planner",
-                    "artifactType", "requirement_plan",
+                    "role", "intent_router",
+                    "artifactType", "retrieval_plan",
+                    "domainPackId", run.getDomainPackId(),
+                    "workflowId", run.getWorkflowId(),
                     "requiredCategories", requirement.requiredCategories(),
                     "constraintCount", requirement.constraints().size()));
-            if (execution.route().clarificationRecommended()) {
-                completeWithClarification(run, execution);
-                return;
-            }
-            if (run.isCancellationRequested()) return;
-            emit(run, "task", Map.of(
-                    "event", "task_delegated",
-                    "role", "lead",
-                    "to", "search",
-                    "taskId", "retrieval"));
-            emit(run, "task", Map.of(
-                    "event", "task_delegated",
-                    "role", "lead",
-                    "to", "recommendation",
-                    "taskId", "retrieval"));
-            if (requirement.sponsoredAllowed()) {
-                emit(run, "task", Map.of(
-                        "event", "task_delegated",
-                        "role", "lead",
-                        "to", "ads",
-                        "taskId", "retrieval"));
-            }
-            var result = execution.result();
-            if (execution.critic().attempted()) {
-                emit(run, "task", Map.of(
-                        "event", "task_delegated",
-                        "role", "lead",
-                        "to", "critic",
-                        "taskId", "evidence_review"));
-                emitModelCall(run, execution.critic());
-            }
-            if (execution.replanned()) {
-                emit(run, "artifact", Map.of(
-                        "event", "artifact_published",
-                        "role", "critic",
-                        "artifactType", "bounded_retrieval_retry",
-                        "applied", true));
-            }
-            if (execution.clarificationRequired()) {
-                completeWithClarification(run, execution);
-                return;
-            }
+
+            execution.tasks().forEach(task -> {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("event", "task_completed");
+                payload.put("role", task.role());
+                payload.put("to", task.role());
+                payload.put("taskId", task.taskId());
+                if (task.parentTaskId() != null) payload.put("parentTaskId", task.parentTaskId());
+                payload.put("capability", task.capability());
+                payload.put("status", task.status());
+                payload.put("revisionAttempt", task.revisionAttempt());
+                emit(run, "task", Map.copyOf(payload));
+            });
+            execution.proposals().forEach(proposal -> {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("event", "delegation_proposal_reviewed");
+                payload.put("role", proposal.proposedBy());
+                payload.put("to", proposal.role());
+                payload.put("capability", proposal.capability());
+                payload.put("proposalId", proposal.proposalId());
+                payload.put("status", proposal.status());
+                if (proposal.rejectionReason() != null) {
+                    payload.put("rejectionReason", proposal.rejectionReason());
+                }
+                emit(run, "policy_gate", Map.copyOf(payload));
+            });
+            execution.roleCalls().forEach(call -> emitModelCall(run, call));
+
             emitChannelResult(run, result, "search", "searchCandidates");
             emitChannelResult(run, result, "recommendation", "recommendationCandidates");
             if (requirement.sponsoredAllowed()) {
@@ -501,14 +573,16 @@ public class RunService {
                     "artifactType", "decision_slate",
                     "slateSize", result.slate().size(),
                     "bundleCount", result.bundles().size()));
-            boolean approved = qualified(result);
+
+            boolean approved = "approved".equals(result.metrics().get("criticVerdict"))
+                    && qualified(result);
             emit(run, "policy_gate", Map.of(
                     "event", "task_completed",
                     "role", "critic",
-                    "gate", "hard_constraints_and_ad_policy",
+                    "gate", "deterministic_audit",
                     "approved", approved,
-                    "bundleRequired", result.requirement().bundleRequested(),
-                    "feasibleBundleCount", result.bundles().size()));
+                    "violations", result.metrics().getOrDefault("criticViolations", List.of()),
+                    "revisionApplied", execution.revisionApplied()));
             if (run.isCancellationRequested()) return;
             run.prepareResult(result, approved ? "proposal" : "needs_replan");
             complete(run, approved ? "proposal" : "needs_replan");
@@ -520,7 +594,7 @@ public class RunService {
                     "event", "run_failed",
                     "role", "lead",
                     "status", "failed",
-                    "error", safeMessage(throwable)));
+                    "errorType", throwable.getClass().getSimpleName()));
             run.transition("failed");
             try {
                 repository.updateWithEventFenced(run, terminalEvent, lease);
@@ -553,7 +627,7 @@ public class RunService {
                 "taskId", "cart_draft",
                 "proposalRunId", run.getProposalRunId()));
         AgentRun proposal = validateProposal(
-                run.getSessionId(),
+                run.getIdentityId(),
                 run.getDomainPackId(),
                 run.getWorkflowId(),
                 run.getProposalRunId());
@@ -659,24 +733,6 @@ public class RunService {
                         "providerId", current.providerId(),
                         "totalPrice", current.totalPrice())));
     }
-    private void completeWithClarification(
-            AgentRun run,
-            AdaptiveDecisionService.Execution execution
-    ) {
-        emit(run, "policy_gate", Map.of(
-                "event", "task_completed",
-                "role", "lead",
-                "gate", "minimum_decision_information",
-                "approved", false));
-        emit(run, "artifact", Map.of(
-                "event", "artifact_published",
-                "role", "lead",
-                "artifactType", "clarification_question",
-                "question", execution.clarificationQuestion()));
-        run.prepareClarification(execution.result());
-        complete(run, "clarification");
-    }
-
     private void complete(AgentRun run, String phase) {
         RunEvent terminalEvent = appendInMemory(run, "result", Map.of(
                 "event", "run_completed",
@@ -695,7 +751,7 @@ public class RunService {
 
     private RunEvent appendInMemory(AgentRun run, String type, Map<String, Object> data) {
         long sequence = sequences.computeIfAbsent(run.getRunId(), ignored -> new AtomicLong()).incrementAndGet();
-        RunEvent event = new RunEvent(UUID.randomUUID().toString(), sequence, type, Instant.now(), data);
+        RunEvent event = new RunEvent(UUID.randomUUID().toString(), run.getRunId(), sequence, type, Instant.now(), data);
         run.addEvent(event);
         return event;
     }
@@ -748,10 +804,6 @@ public class RunService {
         return result.slate().stream().limit(3)
                 .filter(com.moyuan.buysense.domain.Candidate::sponsored)
                 .count() <= 1;
-    }
-
-    private static String safeMessage(Throwable throwable) {
-        return throwable.getMessage() == null ? throwable.getClass().getSimpleName() : throwable.getMessage();
     }
 
     private void emitChannelResult(AgentRun run, com.moyuan.buysense.domain.DecisionResult result,

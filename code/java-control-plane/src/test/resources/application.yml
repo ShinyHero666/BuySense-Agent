@@ -5,6 +5,10 @@ spring:
     password:
   flyway:
     enabled: true
+  jackson:
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: true
 
 buysense:
   session-secret: test-session-secret-at-least-16

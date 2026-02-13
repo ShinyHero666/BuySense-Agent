@@ -22,8 +22,8 @@ public final class DomainPackRegistry {
     private static final Pattern VERSIONED_ID = Pattern.compile("^[a-z][a-z0-9-]*-v[0-9]+$");
     private static final Pattern CATEGORY_ID = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
     private static final List<String> MANIFESTS = List.of(
-            "domains/normal-3c-v1.json",
-            "domains/outdoor-camping-v1.json");
+            "data/normal_3c_domain_v1.json",
+            "data/outdoor_camping_domain_v1.json");
 
     private final Map<String, CommerceDomainPack> packs;
 
@@ -114,13 +114,13 @@ public final class DomainPackRegistry {
                     asset(assets, "catalog"),
                     asset(assets, "reviews"),
                     asset(assets, "compatibility"),
-                    assets.hasNonNull("supplemental_catalog")
-                            ? asset(assets, "supplemental_catalog")
+                    assets.hasNonNull("queries")
+                            ? asset(assets, "queries")
                             : null);
             assertResource(packAssets.catalog());
             assertResource(packAssets.reviews());
             assertResource(packAssets.compatibility());
-            if (packAssets.supplementalCatalog() != null) assertResource(packAssets.supplementalCatalog());
+            if (packAssets.queries() != null) assertResource(packAssets.queries());
 
             List<String> examples = strings(root, "example_queries");
             if (examples.size() > 20) throw new IllegalArgumentException("too many example queries");
@@ -216,17 +216,17 @@ public final class DomainPackRegistry {
 
     private static String asset(JsonNode root, String field) {
         String path = text(root, field);
-        if (!path.startsWith("retail-data/") && !path.equals("catalog.json")) {
-            throw new IllegalArgumentException("asset must stay inside packaged retail data: " + path);
+        if (path.contains("/") || path.contains("\\") || !path.endsWith(".json")) {
+            throw new IllegalArgumentException("asset must be a local JSON filename: " + path);
         }
-        if (!path.endsWith(".json") || path.contains("..") || path.contains("\\")) {
+        if (path.contains("..")) {
             throw new IllegalArgumentException("invalid asset path: " + path);
         }
         return path;
     }
 
     private static void assertResource(String path) {
-        if (!new ClassPathResource(path).exists()) {
+        if (!new ClassPathResource("data/" + path).exists()) {
             throw new IllegalArgumentException("domain asset does not exist: " + path);
         }
     }

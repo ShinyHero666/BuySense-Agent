@@ -1,0 +1,24 @@
+{
+  "suite": "normal-3c-retrieval-v2",
+  "evaluation_kind": "synthetic_deterministic_regression",
+  "label_provenance": "generated_from_catalog_attributes",
+  "generated_at": "2026-08-02T00:00:00Z",
+  "catalog_version": "normal-3c-scale-1200-seed-20260802",
+  "case_count": 120,
+  "spu_count": 1200,
+  "metrics": {
+    "recall_at_10": 0.958333,
+    "ndcg_at_10": 0.995736,
+    "p95_latency_ms": 1.075,
+    "filter_violations": 0,
+    "ad_policy_violations": 0
+  },
+  "gates": {
+    "recall_at_10": true,
+    "ndcg_at_10": true,
+    "p95_latency": true,
+    "hard_filters": true,
+    "ad_policy": true
+  },
+  "passed": true
+}

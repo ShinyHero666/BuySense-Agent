@@ -2,6 +2,7 @@ package com.moyuan.buysense.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.moyuan.buysense.domain.Candidate;
 import com.moyuan.buysense.domain.DecisionResult;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -9,163 +10,122 @@ import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
+/** OpenAI-compatible transport for the six bounded roles in the BuySense workflow. */
 @Component
 public class ModelPortAgentBridge {
     private final ModelPortProperties properties;
-    private final ObjectMapper objectMapper;
+    private final ObjectMapper mapper;
     private final RestClient client;
     private volatile String lastStatus;
     private volatile long lastLatencyMs;
 
-    public ModelPortAgentBridge(ModelPortProperties properties, ObjectMapper objectMapper) {
+    public ModelPortAgentBridge(ModelPortProperties properties, ObjectMapper mapper) {
         this.properties = properties;
-        this.objectMapper = objectMapper;
-        HttpClient httpClient = HttpClient.newBuilder()
+        this.mapper = mapper;
+        HttpClient http = HttpClient.newBuilder()
                 .connectTimeout(properties.getConnectTimeout())
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(properties.getReadTimeout());
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
+        factory.setReadTimeout(properties.getReadTimeout());
         this.client = RestClient.builder()
                 .baseUrl(trimTrailingSlash(properties.getBaseUrl()))
-                .requestFactory(requestFactory)
+                .requestFactory(factory)
                 .build();
         this.lastStatus = properties.isEnabled() ? "configured" : "offline";
     }
 
-    public RoleCall plan(String runId, String message) {
-        if (!canCall(1)) return RoleCall.disabled("planner");
+    public RoleCall plan(String runId, String message, int ordinal) {
         String system = """
-                You are the bounded planner for a 3C digital purchase-decision system.
-                Return one strict JSON object with these fields:
-                rewrittenQuery, intent, explanation.
-                Preserve every explicit category, budget, no-ad and bundle requirement.
-                Add only useful retrieval vocabulary and soft use-case preferences.
-                Never invent product, price, stock or compatibility facts.
-                Keep explanation under 60 Chinese characters.
+                你是购买决策系统的 Intent Router。只输出一个 JSON 对象：
+                intent、query、requestedCategories、preferredBrands、useCases、channels、
+                sponsoredAllowed、candidateBudget、reason。
+                必须保留用户原始问题、显式预算、品类、品牌、用途和不要广告要求；
+                search 必须保留，套装必须保留 recommendation，禁止编造商品事实。
                 """;
-        return call(runId, "planner", system, message, 1);
+        return call(runId, "intent_router", system, message, ordinal);
     }
 
-    public RoleCall reviewDecision(String runId, String message, DecisionResult decision) {
-        if (!canCall(2)) return RoleCall.disabled("critic");
+    public RoleCall rank(
+            String runId,
+            String role,
+            List<Candidate> candidates,
+            int ordinal
+    ) {
+        List<Map<String, Object>> grounded = candidates.stream().map(candidate -> Map.<String, Object>of(
+                "skuId", candidate.product().skuId(),
+                "title", candidate.product().name(),
+                "category", candidate.product().category(),
+                "price", candidate.product().price(),
+                "score", candidate.score(),
+                "sponsored", candidate.sponsored())).toList();
+        String system = """
+                你是搜广推渠道排序角色。只输出 JSON：rankedSkuIds、rationaleBySku；
+                只能重排输入中已有 SKU，不能新增商品、价格、库存或兼容性事实。
+                """;
+        return call(runId, role, system, json(Map.of("candidates", grounded)), ordinal);
+    }
 
-        List<Map<String, Object>> candidates = decision.slate().stream().limit(5)
+    public RoleCall reviewDecision(
+            String runId,
+            String message,
+            DecisionResult decision,
+            int ordinal
+    ) {
+        List<Map<String, Object>> candidates = decision.slate().stream().limit(12)
                 .map(candidate -> Map.<String, Object>of(
-                        "id", candidate.product().id(),
-                        "name", candidate.product().name(),
+                        "skuId", candidate.product().skuId(),
                         "category", candidate.product().category(),
                         "price", candidate.product().price(),
-                        "channels", candidate.channels(),
-                        "sponsored", candidate.sponsored()))
+                        "sponsored", candidate.sponsored(),
+                        "score", candidate.score()))
                 .toList();
         Map<String, Object> evidence = new LinkedHashMap<>();
         evidence.put("query", message);
         evidence.put("budget", decision.requirement().budget());
-        evidence.put("requiredCategories", decision.requirement().requiredCategories());
+        evidence.put("requestedCategories", decision.requirement().requiredCategories());
         evidence.put("useCases", decision.requirement().useCases());
-        evidence.put("sponsoredAllowed", decision.requirement().sponsoredAllowed());
         evidence.put("candidates", candidates);
         evidence.put("bundleCount", decision.bundles().size());
-
+        evidence.put("deterministicViolations",
+                decision.metrics().getOrDefault("criticViolations", List.of()));
         String system = """
-                You are the evidence critic for a 3C purchase-decision system.
-                Deterministic code has already enforced budget, category, ad and compatibility rules.
-                Return one strict JSON object with:
-                verdict: APPROVE, RETRIEVE or CLARIFY;
-                explanation: evidence-grounded Chinese text under 80 characters;
-                supplementaryQuery: extra retrieval terms only when verdict is RETRIEVE;
-                clarificationQuestion: one user question only when verdict is CLARIFY.
-                Do not change hard constraints and do not introduce facts absent from the evidence.
-                Use CLARIFY only when a missing hard input makes a safe decision impossible.
-                A bundle with explicit categories, budget and feasible candidates is complete enough.
-                Missing optional preferences are not grounds for CLARIFY.
-                When candidates exist and bundleCount is positive, prefer APPROVE over CLARIFY.
+                你是独立 Critic。确定性代码已经完成硬约束审核。
+                只输出 JSON：verdict、rationale、additionalViolations。
+                你不能删除确定性违规，只能在证据确实支持时补充：
+                insufficient_review_confidence、weak_use_case_match、ambiguous_compatibility。
                 """;
-        return call(runId, "critic", system, objectMapper.valueToTree(evidence).toString(), 2);
+        return call(runId, "critic", system, json(evidence), ordinal);
     }
 
-    public RoleCall analyzeIntent(String runId, String message) {
-        return plan(runId, message);
-    }
-
-    public RoleCall explainDecision(String runId, String message, DecisionResult decision) {
-        return reviewDecision(runId, message, decision);
-    }
-
-    public DecisionResult.ModelRuntime runtime(
-            ExecutionRouter.Route route,
-            RoleCall planner,
-            RoleCall critic,
-            boolean replanned
+    public RoleCall compose(
+            String runId,
+            String deterministicMessage,
+            boolean approved,
+            int ordinal
     ) {
-        return runtime(route, planner, critic, replanned, true);
-    }
-
-    public DecisionResult.ModelRuntime runtime(
-            ExecutionRouter.Route route,
-            RoleCall planner,
-            RoleCall critic,
-            boolean replanned,
-            boolean acceptCriticClarification
-    ) {
-        List<RoleCall> attempted = List.of(planner, critic).stream()
-                .filter(RoleCall::attempted)
-                .toList();
-        int modelCalls = attempted.size();
-        int fallbackCount = (int) attempted.stream().filter(call -> !call.success()).count();
-        int totalTokens = attempted.stream().mapToInt(RoleCall::totalTokens).sum();
-        long latencyMs = attempted.stream().mapToLong(RoleCall::latencyMs).sum();
-        boolean rejectedCriticClarification = critic.success()
-                && "CLARIFY".equalsIgnoreCase(critic.verdict())
-                && !acceptCriticClarification;
-        String explanation = critic.success() && !rejectedCriticClarification
-                ? critic.explanation()
-                : planner.success() ? planner.explanation() : null;
-        String clarification = acceptCriticClarification
-                && critic.success() && hasText(critic.clarificationQuestion())
-                ? critic.clarificationQuestion()
-                : route.clarificationQuestion();
-
-        return new DecisionResult.ModelRuntime(
-                route.mode().name().toLowerCase(Locale.ROOT),
-                properties.isEnabled() ? properties.getModel() : "deterministic-sar-engine",
-                modelCalls,
-                fallbackCount,
-                totalTokens,
-                latencyMs,
-                planner.success() ? planner.rewrittenQuery() : null,
-                planner.success() ? planner.intent() : null,
-                explanation,
-                route.reasons(),
-                critic.success() ? critic.verdict() : null,
-                replanned,
-                clarification);
-    }
-
-    public DecisionResult.ModelRuntime runtime(RoleCall planner, RoleCall critic) {
-        ExecutionRouter.Route compatibilityRoute = new ExecutionRouter.Route(
-                ExecutionRouter.Mode.HYBRID,
-                List.of("legacy_bridge_call"),
-                false,
-                null);
-        return runtime(compatibilityRoute, planner, critic, false);
+        String system = """
+                你是 Lead，只基于输入证据组织最终中文说明。只输出 JSON：message、approved。
+                approved 不得改变；不得新增数字，不得声称已下单、已创建订单、已支付或支付成功。
+                商品行中出现“｜赞助”时必须原样保留，不能删除或改写为普通商品；推荐依据中出现“快充依据”、功率或协议时必须保留。
+                只能调整语言顺序，不得删除输入中已有的推荐依据、取舍、预算利用率、兼容依据和交易边界。
+                对比场景必须保留多个候选，不能合并成单个推荐；套装场景必须保留总价和兼容说明。
+                """;
+        return call(runId, "lead", system, json(Map.of(
+                "message", deterministicMessage, "approved", approved)), ordinal);
     }
 
     public Status status() {
         return new Status(
-                properties.isEnabled() ? "modelport" : "offline",
-                properties.isEnabled() ? properties.getModel() : "deterministic-sar-engine",
+                properties.isEnabled() ? "modelport" : "replay",
+                properties.isEnabled() ? properties.getModel() : "deterministic-replay",
                 lastStatus,
                 lastLatencyMs);
-    }
-
-    private boolean canCall(int ordinal) {
-        return properties.isEnabled() && properties.getMaxCallsPerRun() >= ordinal;
     }
 
     private RoleCall call(
@@ -175,27 +135,31 @@ public class ModelPortAgentBridge {
             String user,
             int ordinal
     ) {
+        if (!properties.isEnabled() || ordinal > properties.getMaxCallsPerRun()) {
+            return RoleCall.disabled(role);
+        }
         long started = System.nanoTime();
         try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", properties.getModel());
+            body.put("temperature", 0);
+            body.put("max_tokens", properties.getMaxTokensPerCall());
+            body.put("messages", List.of(
+                    Map.of("role", "system", "content", system),
+                    Map.of("role", "user", "content", user)));
             JsonNode response = client.post()
                     .uri("/v1/chat/completions")
                     .header("x-api-key", properties.getApiKey())
+                    .header("Authorization", "Bearer " + properties.getApiKey())
                     .header("Idempotency-Key", runId + "-" + role + "-" + ordinal)
-                    .body(Map.of(
-                            "model", properties.getModel(),
-                            "temperature", 0,
-                            "max_tokens", properties.getMaxTokensPerCall(),
-                            "messages", List.of(
-                                    Map.of("role", "system", "content", system),
-                                    Map.of("role", "user", "content", user))))
+                    .body(body)
                     .retrieve()
                     .body(JsonNode.class);
             long latency = elapsed(started);
-            String content = response == null
-                    ? ""
+            String content = response == null ? ""
                     : response.path("choices").path(0).path("message").path("content").asText("");
-            JsonNode payload = parseObject(content);
-            if (payload == null) {
+            JsonNode proposal = parseObject(content);
+            if (proposal == null) {
                 lastStatus = "degraded";
                 lastLatencyMs = latency;
                 return RoleCall.failure(role, latency, "model returned non-JSON content");
@@ -205,27 +169,12 @@ public class ModelPortAgentBridge {
                             + response.path("usage").path("completion_tokens").asInt());
             lastStatus = "up";
             lastLatencyMs = latency;
-            return new RoleCall(
-                    role,
-                    true,
-                    true,
-                    text(payload, "rewrittenQuery"),
-                    text(payload, "intent"),
-                    text(payload, "explanation"),
-                    text(payload, "verdict"),
-                    text(payload, "supplementaryQuery"),
-                    text(payload, "clarificationQuestion"),
-                    totalTokens,
-                    latency,
-                    null);
+            return new RoleCall(role, true, true, proposal, totalTokens, latency, null);
         } catch (Exception error) {
             long latency = elapsed(started);
             lastStatus = "degraded";
             lastLatencyMs = latency;
-            return RoleCall.failure(
-                    role,
-                    latency,
-                    error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+            return RoleCall.failure(role, latency, error.getClass().getSimpleName());
         }
     }
 
@@ -234,20 +183,19 @@ public class ModelPortAgentBridge {
         int end = content.lastIndexOf('}');
         if (start < 0 || end <= start) return null;
         try {
-            JsonNode parsed = objectMapper.readTree(content.substring(start, end + 1));
+            JsonNode parsed = mapper.readTree(content.substring(start, end + 1));
             return parsed.isObject() ? parsed : null;
         } catch (Exception ignored) {
             return null;
         }
     }
 
-    private static String text(JsonNode payload, String field) {
-        String value = payload.path(field).asText(null);
-        return hasText(value) ? value.trim() : null;
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
+    private String json(Object value) {
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (Exception error) {
+            throw new IllegalStateException("model input serialization failed", error);
+        }
     }
 
     private static long elapsed(long started) {
@@ -262,24 +210,34 @@ public class ModelPortAgentBridge {
             String role,
             boolean attempted,
             boolean success,
-            String rewrittenQuery,
-            String intent,
-            String explanation,
-            String verdict,
-            String supplementaryQuery,
-            String clarificationQuestion,
+            JsonNode proposal,
             int totalTokens,
             long latencyMs,
             String error
     ) {
         public static RoleCall disabled(String role) {
-            return new RoleCall(
-                    role, false, false, null, null, null, null, null, null, 0, 0, null);
+            return new RoleCall(role, false, false, null, 0, 0, null);
         }
 
         static RoleCall failure(String role, long latencyMs, String error) {
-            return new RoleCall(
-                    role, true, false, null, null, null, null, null, null, 0, latencyMs, error);
+            return new RoleCall(role, true, false, null, 0, latencyMs, error);
+        }
+
+        public String text(String field) {
+            if (!success || proposal == null) return null;
+            String value = proposal.path(field).asText(null);
+            return value == null || value.isBlank() ? null : value.trim();
+        }
+
+        public List<String> strings(String field, int maximum) {
+            if (!success || proposal == null || !proposal.path(field).isArray()) return List.of();
+            List<String> values = new ArrayList<>();
+            proposal.path(field).forEach(item -> {
+                if (item.isTextual() && !item.asText().isBlank() && values.size() < maximum) {
+                    values.add(item.asText());
+                }
+            });
+            return List.copyOf(values);
         }
     }
 

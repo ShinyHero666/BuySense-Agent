@@ -19,8 +19,7 @@ class DomainPackRegistryTest {
 
         assertThat(domains.require("normal-3c-v1").categories())
                 .extracting(CommerceDomainPack.CategoryDefinition::id)
-                .containsExactly("phone", "headphones", "charger", "cable", "case",
-                        "laptop", "mouse", "keyboard");
+                .containsExactly("phone", "headphones", "charger", "cable", "case");
         assertThat(domains.require("outdoor-camping-v1").defaultBundleCategories())
                 .containsExactly("camp_stove", "fuel_canister", "cookware");
         assertThat(domains.view().packs()).hasSize(2)

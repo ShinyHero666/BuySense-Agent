@@ -1,0 +1,609 @@
+{
+  "catalog_version": "normal-3c-snapshot-v1",
+  "quote_version": "quote-snapshot-2026-08-01",
+  "generated_at": "2026-08-01T00:00:00Z",
+  "dataset_purpose": "offline-evaluation",
+  "calibration_note": "接口和场景字段参考主流产品规格设计；新增品牌、型号、价格与评价均为离线合成样本。",
+  "spus": [
+    {
+      "spu_id": "spu-iphone-15",
+      "title": "Apple iPhone 15",
+      "category": "phone",
+      "brand": "Apple",
+      "tags": ["手机", "拍照", "续航", "轻便", "usb-c"],
+      "skus": [
+        {
+          "sku_id": "sku-iphone-15-128-blue",
+          "title": "Apple iPhone 15 128GB 蓝色",
+          "ecosystem": "ios",
+          "connectors": ["usb-c", "bluetooth"],
+          "protocols": ["usb-pd", "bluetooth-aac"],
+          "max_power_watts": 27,
+          "offers": [
+            {
+              "offer_id": "offer-iphone-15-128-blue-self",
+              "seller_id": "moyuan-self",
+              "price": 5299,
+              "currency": "CNY",
+              "stock": 32,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        },
+        {
+          "sku_id": "sku-iphone-15-256-black",
+          "title": "Apple iPhone 15 256GB 黑色",
+          "ecosystem": "ios",
+          "connectors": ["usb-c", "bluetooth"],
+          "protocols": ["usb-pd", "bluetooth-aac"],
+          "max_power_watts": 27,
+          "offers": [
+            {
+              "offer_id": "offer-iphone-15-256-black-self",
+              "seller_id": "moyuan-self",
+              "price": 5899,
+              "currency": "CNY",
+              "stock": 21,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-xiaomi-14",
+      "title": "Xiaomi 14",
+      "category": "phone",
+      "brand": "Xiaomi",
+      "tags": ["手机", "拍照", "游戏", "续航", "快充"],
+      "skus": [
+        {
+          "sku_id": "sku-xiaomi-14-256-black",
+          "title": "Xiaomi 14 256GB 黑色",
+          "ecosystem": "android",
+          "connectors": ["usb-c", "bluetooth"],
+          "protocols": ["usb-pd", "pps", "xiaomi-fast-charge", "bluetooth-aac"],
+          "max_power_watts": 90,
+          "offers": [
+            {
+              "offer_id": "offer-xiaomi-14-256-black-self",
+              "seller_id": "moyuan-self",
+              "price": 3999,
+              "currency": "CNY",
+              "stock": 25,
+              "sponsored": true,
+              "ad_bid": 2.1,
+              "ad_quality": 0.92,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-honor-200",
+      "title": "HONOR 200",
+      "category": "phone",
+      "brand": "HONOR",
+      "tags": ["手机", "人像", "拍照", "续航", "快充"],
+      "skus": [
+        {
+          "sku_id": "sku-honor-200-256-green",
+          "title": "HONOR 200 256GB 绿色",
+          "ecosystem": "android",
+          "connectors": ["usb-c", "bluetooth"],
+          "protocols": ["usb-pd", "pps", "bluetooth-aac"],
+          "max_power_watts": 66,
+          "offers": [
+            {
+              "offer_id": "offer-honor-200-256-green-self",
+              "seller_id": "moyuan-self",
+              "price": 2799,
+              "currency": "CNY",
+              "stock": 18,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-airpods-pro-2",
+      "title": "Apple AirPods Pro 2",
+      "category": "headphones",
+      "brand": "Apple",
+      "tags": ["耳机", "通勤", "降噪", "音质", "ios"],
+      "skus": [
+        {
+          "sku_id": "sku-airpods-pro-2-usbc",
+          "title": "Apple AirPods Pro 2 USB-C",
+          "ecosystem": "ios",
+          "connectors": ["usb-c", "bluetooth"],
+          "protocols": ["bluetooth-aac"],
+          "offers": [
+            {
+              "offer_id": "offer-airpods-pro-2-usbc-self",
+              "seller_id": "moyuan-self",
+              "price": 1599,
+              "currency": "CNY",
+              "stock": 41,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-soundcore-liberty",
+      "title": "Soundcore Liberty",
+      "category": "headphones",
+      "brand": "Soundcore",
+      "tags": ["耳机", "通勤", "降噪", "音质", "性价比"],
+      "skus": [
+        {
+          "sku_id": "sku-soundcore-liberty-black",
+          "title": "Soundcore Liberty 降噪真无线耳机",
+          "ecosystem": "universal",
+          "connectors": ["usb-c", "bluetooth"],
+          "protocols": ["bluetooth-aac", "bluetooth-ldac"],
+          "offers": [
+            {
+              "offer_id": "offer-soundcore-liberty-black-self",
+              "seller_id": "moyuan-self",
+              "price": 499,
+              "currency": "CNY",
+              "stock": 76,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-xiaomi-buds-pro",
+      "title": "Xiaomi Buds Pro",
+      "category": "headphones",
+      "brand": "Xiaomi",
+      "tags": ["耳机", "通勤", "降噪", "android"],
+      "skus": [
+        {
+          "sku_id": "sku-xiaomi-buds-white",
+          "title": "Xiaomi Buds Pro 真无线耳机",
+          "ecosystem": "android",
+          "connectors": ["usb-c", "bluetooth"],
+          "protocols": ["bluetooth-aac", "bluetooth-ldac"],
+          "offers": [
+            {
+              "offer_id": "offer-xiaomi-buds-white-self",
+              "seller_id": "moyuan-self",
+              "price": 699,
+              "currency": "CNY",
+              "stock": 54,
+              "sponsored": true,
+              "ad_bid": 1.4,
+              "ad_quality": 0.86,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-apple-charger-20w",
+      "title": "Apple 20W USB-C 电源适配器",
+      "category": "charger",
+      "brand": "Apple",
+      "tags": ["充电器", "usb-c", "快充", "便携"],
+      "skus": [
+        {
+          "sku_id": "sku-apple-charger-20w",
+          "title": "Apple 20W USB-C 电源适配器",
+          "ecosystem": "universal",
+          "connectors": ["usb-c"],
+          "protocols": ["usb-pd"],
+          "max_power_watts": 20,
+          "offers": [
+            {
+              "offer_id": "offer-apple-charger-20w-self",
+              "seller_id": "moyuan-self",
+              "price": 129,
+              "currency": "CNY",
+              "stock": 90,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-ugreen-gan-65w",
+      "title": "UGREEN 65W GaN USB-C 充电器",
+      "category": "charger",
+      "brand": "UGREEN",
+      "tags": ["充电器", "usb-c", "快充", "多口", "便携"],
+      "skus": [
+        {
+          "sku_id": "sku-ugreen-gan-65w",
+          "title": "UGREEN 65W GaN USB-C 充电器",
+          "ecosystem": "universal",
+          "connectors": ["usb-c"],
+          "protocols": ["usb-pd", "pps"],
+          "max_power_watts": 65,
+          "offers": [
+            {
+              "offer_id": "offer-ugreen-gan-65w-self",
+              "seller_id": "moyuan-self",
+              "price": 199,
+              "currency": "CNY",
+              "stock": 63,
+              "sponsored": true,
+              "ad_bid": 1.7,
+              "ad_quality": 0.9,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-xiaomi-charger-90w",
+      "title": "Xiaomi 90W USB-C 快充套装",
+      "category": "charger",
+      "brand": "Xiaomi",
+      "tags": ["充电器", "usb-c", "快充", "90w"],
+      "skus": [
+        {
+          "sku_id": "sku-xiaomi-charger-90w",
+          "title": "Xiaomi 90W USB-C 快充套装",
+          "ecosystem": "android",
+          "connectors": ["usb-c"],
+          "protocols": ["usb-pd", "pps", "xiaomi-fast-charge"],
+          "max_power_watts": 90,
+          "offers": [
+            {
+              "offer_id": "offer-xiaomi-charger-90w-self",
+              "seller_id": "moyuan-self",
+              "price": 299,
+              "currency": "CNY",
+              "stock": 38,
+              "sponsored": false,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-camera-battery-charger",
+      "title": "相机专用电池充电器",
+      "category": "charger",
+      "brand": "Other",
+      "tags": ["相机", "专用电池"],
+      "skus": [
+        {
+          "sku_id": "sku-camera-charger-sponsored",
+          "title": "相机专用电池充电器",
+          "ecosystem": "universal",
+          "connectors": ["proprietary"],
+          "protocols": ["camera-battery"],
+          "max_power_watts": 10,
+          "offers": [
+            {
+              "offer_id": "offer-camera-charger-sponsored-self",
+              "seller_id": "moyuan-self",
+              "price": 99,
+              "currency": "CNY",
+              "stock": 99,
+              "sponsored": true,
+              "ad_bid": 9.9,
+              "ad_quality": 0.2,
+              "valid_until": "2099-01-01T00:00:00Z"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "spu_id": "spu-nova-creator-ultra",
+      "title": "Nova Creator Ultra",
+      "category": "phone",
+      "brand": "Nova",
+      "tags": ["手机", "拍照", "人像", "夜景", "长焦", "视频", "创作", "续航", "usb-c"],
+      "decision_facts": [
+        "5000 万像素主摄、光学防抖和 3 倍长焦覆盖人像、夜景与旅行构图",
+        "4K 视频防抖和 512GB 存储适合持续内容创作",
+        "5200mAh 电池与 65W USB-PD 快充兼顾外拍续航"
+      ],
+      "tradeoffs": ["机身偏重，价格主要投入在影像和存储能力"],
+      "skus": [{
+        "sku_id": "sku-nova-creator-ultra-512-black",
+        "title": "Nova Creator Ultra 512GB 曜石黑",
+        "ecosystem": "android",
+        "connectors": ["usb-c", "bluetooth"],
+        "protocols": ["usb-pd", "pps", "bluetooth-aac"],
+        "max_power_watts": 65,
+        "offers": [{
+          "offer_id": "offer-nova-creator-ultra-512-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 6299,
+          "currency": "CNY",
+          "stock": 24,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-lumina-portrait-x7-pro",
+      "title": "Lumina Portrait X7 Pro",
+      "category": "phone",
+      "brand": "Lumina",
+      "tags": ["手机", "拍照", "人像", "夜景", "轻便", "快充", "usb-c"],
+      "decision_facts": [
+        "人像焦段、光学防抖和肤色优化面向人物拍摄",
+        "夜景多帧合成适合室内与城市夜景",
+        "4800mAh 电池与 80W 快充适合日常高频拍摄"
+      ],
+      "tradeoffs": ["长焦覆盖弱于影像旗舰，不强调重载游戏散热"],
+      "skus": [{
+        "sku_id": "sku-lumina-portrait-x7-pro-256-silver",
+        "title": "Lumina Portrait X7 Pro 256GB 星雾银",
+        "ecosystem": "android",
+        "connectors": ["usb-c", "bluetooth"],
+        "protocols": ["usb-pd", "pps", "bluetooth-aac"],
+        "max_power_watts": 80,
+        "offers": [{
+          "offer_id": "offer-lumina-portrait-x7-pro-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 4499,
+          "currency": "CNY",
+          "stock": 41,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-atlas-zoom-pro",
+      "title": "Atlas Zoom Pro",
+      "category": "phone",
+      "brand": "Atlas",
+      "tags": ["手机", "拍照", "长焦", "旅行", "视频", "续航", "usb-c"],
+      "decision_facts": [
+        "5 倍潜望长焦和光学防抖面向远景、舞台与旅行拍摄",
+        "高亮屏和 5300mAh 电池适合户外取景",
+        "USB-PD 与 PPS 协议便于复用旅行充电器"
+      ],
+      "tradeoffs": ["长焦模组使机身更厚，近距离人像不如专门人像机型自然"],
+      "skus": [{
+        "sku_id": "sku-atlas-zoom-pro-512-blue",
+        "title": "Atlas Zoom Pro 512GB 深海蓝",
+        "ecosystem": "android",
+        "connectors": ["usb-c", "bluetooth"],
+        "protocols": ["usb-pd", "pps", "bluetooth-aac"],
+        "max_power_watts": 65,
+        "offers": [{
+          "offer_id": "offer-atlas-zoom-pro-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 5599,
+          "currency": "CNY",
+          "stock": 18,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-endura-max",
+      "title": "Endura Max",
+      "category": "phone",
+      "brand": "Endura",
+      "tags": ["手机", "续航", "旅行", "耐用", "快充", "usb-c"],
+      "decision_facts": [
+        "6500mAh 电池和低功耗屏幕面向长续航与差旅场景",
+        "IP68 防护和强化中框降低户外使用顾虑",
+        "66W USB-PD 快充兼顾通用性"
+      ],
+      "tradeoffs": ["影像以记录为主，机身重量高于轻薄机型"],
+      "skus": [{
+        "sku_id": "sku-endura-max-256-green",
+        "title": "Endura Max 256GB 远山绿",
+        "ecosystem": "android",
+        "connectors": ["usb-c", "bluetooth"],
+        "protocols": ["usb-pd", "pps", "bluetooth-aac"],
+        "max_power_watts": 66,
+        "offers": [{
+          "offer_id": "offer-endura-max-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 3299,
+          "currency": "CNY",
+          "stock": 56,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-gamecore-g1",
+      "title": "GameCore G1",
+      "category": "phone",
+      "brand": "GameCore",
+      "tags": ["手机", "游戏", "高刷", "散热", "低延迟", "快充", "usb-c"],
+      "decision_facts": [
+        "主动散热、高刷新率屏幕和触控优化面向长时间游戏",
+        "旁路供电减少边充边玩时的电池发热",
+        "80W 快充缩短游戏间隙补能时间"
+      ],
+      "tradeoffs": ["外观和重量偏游戏风格，拍照不是主要卖点"],
+      "skus": [{
+        "sku_id": "sku-gamecore-g1-256-black",
+        "title": "GameCore G1 256GB 竞速黑",
+        "ecosystem": "android",
+        "connectors": ["usb-c", "bluetooth"],
+        "protocols": ["usb-pd", "pps", "bluetooth-aac"],
+        "max_power_watts": 80,
+        "offers": [{
+          "offer_id": "offer-gamecore-g1-sponsored",
+          "seller_id": "gamecore-market",
+          "price": 3999,
+          "currency": "CNY",
+          "stock": 37,
+          "sponsored": true,
+          "ad_bid": 1.8,
+          "ad_quality": 0.91,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-compact-s",
+      "title": "Compact S",
+      "category": "phone",
+      "brand": "Compact",
+      "tags": ["手机", "轻便", "通勤", "旅行", "续航", "usb-c"],
+      "decision_facts": [
+        "窄机身和轻量设计适合单手使用、通勤与旅行",
+        "4500mAh 电池覆盖中度日常使用",
+        "45W USB-PD 快充可复用通用充电器"
+      ],
+      "tradeoffs": ["屏幕和扬声器规模较小，不适合追求沉浸游戏体验的用户"],
+      "skus": [{
+        "sku_id": "sku-compact-s-256-white",
+        "title": "Compact S 256GB 云杉白",
+        "ecosystem": "android",
+        "connectors": ["usb-c", "bluetooth"],
+        "protocols": ["usb-pd", "pps", "bluetooth-aac"],
+        "max_power_watts": 45,
+        "offers": [{
+          "offer_id": "offer-compact-s-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 2299,
+          "currency": "CNY",
+          "stock": 72,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-clearsound-travel-anc",
+      "title": "ClearSound Travel ANC",
+      "category": "headphones",
+      "brand": "ClearSound",
+      "tags": ["耳机", "降噪", "通勤", "旅行", "续航", "蓝牙"],
+      "decision_facts": [
+        "自适应降噪和通透模式覆盖通勤与旅行",
+        "单次 8 小时续航并支持双设备连接"
+      ],
+      "tradeoffs": ["强调便携和降噪，解析力不及监听取向耳机"],
+      "skus": [{
+        "sku_id": "sku-clearsound-travel-anc-black",
+        "title": "ClearSound Travel ANC 曜石黑",
+        "ecosystem": "universal",
+        "connectors": ["bluetooth", "usb-c"],
+        "protocols": ["bluetooth-aac"],
+        "offers": [{
+          "offer_id": "offer-clearsound-travel-anc-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 399,
+          "currency": "CNY",
+          "stock": 88,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-studiopods-creator",
+      "title": "StudioPods Creator",
+      "category": "headphones",
+      "brand": "StudioPods",
+      "tags": ["耳机", "音质", "视频", "创作", "低延迟", "蓝牙"],
+      "decision_facts": [
+        "低延迟监听和中性调音适合视频剪辑与内容创作",
+        "蓝牙 AAC 与有线 USB-C 两种连接方式便于切换设备"
+      ],
+      "tradeoffs": ["降噪强度低于纯通勤旗舰，佩戴体积略大"],
+      "skus": [{
+        "sku_id": "sku-studiopods-creator-gray",
+        "title": "StudioPods Creator 石墨灰",
+        "ecosystem": "universal",
+        "connectors": ["bluetooth", "usb-c"],
+        "protocols": ["bluetooth-aac", "usb-audio"],
+        "offers": [{
+          "offer_id": "offer-studiopods-creator-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 899,
+          "currency": "CNY",
+          "stock": 44,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-voltedge-gan-65w",
+      "title": "VoltEdge 65W GaN 双口充电器",
+      "category": "charger",
+      "brand": "VoltEdge",
+      "tags": ["充电器", "usb-c", "usb-pd", "pps", "快充", "多口", "旅行"],
+      "decision_facts": [
+        "65W USB-PD 与 PPS 覆盖手机、平板和轻薄本",
+        "双 USB-C 口适合旅行时减少充电器数量"
+      ],
+      "tradeoffs": ["双口同时使用会动态分配功率，单设备峰值会下降"],
+      "skus": [{
+        "sku_id": "sku-voltedge-gan-65w",
+        "title": "VoltEdge 65W GaN 双口充电器",
+        "ecosystem": "universal",
+        "connectors": ["usb-c"],
+        "protocols": ["usb-pd", "pps"],
+        "max_power_watts": 65,
+        "offers": [{
+          "offer_id": "offer-voltedge-gan-65w-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 249,
+          "currency": "CNY",
+          "stock": 96,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    },
+    {
+      "spu_id": "spu-travelcube-45w",
+      "title": "TravelCube 45W USB-C 充电器",
+      "category": "charger",
+      "brand": "TravelCube",
+      "tags": ["充电器", "usb-c", "usb-pd", "pps", "便携", "旅行"],
+      "decision_facts": [
+        "45W USB-PD 与 PPS 满足主流手机快充并保持小体积",
+        "折叠插脚便于通勤和旅行收纳"
+      ],
+      "tradeoffs": ["不适合需要 65W 以上输入的高性能笔记本"],
+      "skus": [{
+        "sku_id": "sku-travelcube-45w",
+        "title": "TravelCube 45W USB-C 充电器",
+        "ecosystem": "universal",
+        "connectors": ["usb-c"],
+        "protocols": ["usb-pd", "pps"],
+        "max_power_watts": 45,
+        "offers": [{
+          "offer_id": "offer-travelcube-45w-self",
+          "seller_id": "moyuan-benchmark-self",
+          "price": 159,
+          "currency": "CNY",
+          "stock": 110,
+          "sponsored": false,
+          "valid_until": "2099-01-01T00:00:00Z"
+        }]
+      }]
+    }
+  ]
+}

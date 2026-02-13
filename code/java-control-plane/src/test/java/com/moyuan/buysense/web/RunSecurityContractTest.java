@@ -57,7 +57,7 @@ class RunSecurityContractTest {
                                 "confirmed", true,
                                 "domainPackId", "normal-3c-v1",
                                 "proposalRunId", ownerProposal.runId()))))
-                .andExpect(status().isUnprocessableEntity()));
+                .andExpect(status().isConflict()));
         assertThat(crossSessionError.path("error").asText()).isEqualTo("proposal_run_not_found");
     }
 
@@ -95,7 +95,7 @@ class RunSecurityContractTest {
                                 "confirmed", true,
                                 "domainPackId", "outdoor-camping-v1",
                                 "proposalRunId", creation.runId()))))
-                .andExpect(status().isUnprocessableEntity()));
+                .andExpect(status().isConflict()));
         assertThat(mismatch.path("error").asText()).isEqualTo("proposal_extension_mismatch");
     }
 

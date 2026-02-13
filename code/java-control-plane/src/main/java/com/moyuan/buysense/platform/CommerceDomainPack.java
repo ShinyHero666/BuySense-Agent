@@ -50,6 +50,6 @@ public record CommerceDomainPack(
         }
     }
 
-    public record Assets(String catalog, String reviews, String compatibility, String supplementalCatalog) {
+    public record Assets(String catalog, String reviews, String compatibility, String queries) {
     }
 }

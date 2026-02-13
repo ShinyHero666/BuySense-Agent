@@ -1,88 +1,66 @@
-# BuySense Java 17 control plane
+# BuySense
 
-BuySense is a bounded multi-domain purchase-decision application built with Spring Boot. The primary domain is 3C electronics; the outdoor-camping pack verifies that the same orchestration can load another catalog, vocabulary, evidence set and compatibility graph without scattering domain rules through the core.
+BuySense is a Java 17 and Spring Boot purchase-decision Agent for 3C electronics and outdoor-camping products. It turns a natural-language requirement into an evidence-grounded product set while keeping budget, inventory, compatibility, advertising, and transaction boundaries deterministic.
 
-Each production request follows one route:
+## Architecture
 
-- CLARIFICATION: required business input is missing, so retrieval stops.
-- WORKFLOW: information-complete requests use deterministic services without an LLM call.
-- HYBRID: bundles or semantically complex requests may call one Planner and one Critic; both remain behind deterministic policy gates.
+Every request executes the same bounded collaboration chain:
 
-## Implemented capabilities
+1. Intent Router parses explicit constraints and proposes retrieval intent.
+2. Search and Ads run concurrently; Recommendation consumes Search evidence.
+3. Search and Recommendation candidates are fused with weighted RRF.
+4. Sponsored candidates pass relevance, quality, fatigue, disclosure, and placement gates.
+5. A compatibility graph enumerates feasible bundles under the budget.
+6. Price, stock, and review evidence are refreshed before confirmation.
+7. A deterministic audit runs before Critic; one bounded revision is allowed.
+8. Lead formats the final proposal without creating an order or authorizing payment.
 
-- two versioned Domain Packs backed by one Capability / Workflow Registry;
-- ten registered capabilities with a validated, bounded delegation graph;
-- Search, Recommendation and Ads retrieval with weighted RRF and deterministic ad policy;
-- bounded global bundle enumeration with budget, stock and compatibility checks;
-- Planner enrichment that cannot overwrite user hard constraints;
-- Critic APPROVE, RETRIEVE and CLARIFY contract with one bounded retrieval retry;
-- Catalog, Review and Pricing Provider SPI with strict provenance;
-- a Java-native, read-only Shopify Admin GraphQL adapter with fixed queries, scope checks and bounded caching;
-- strict JSON, exact response partitions, bounded I/O and fail-closed fallback defaults;
-- server-owned identity, cross-session resource hiding and request-bound idempotency;
-- database-atomic admission, bounded execution, Run leases, fencing, renewal and recovery;
-- asynchronous Runs, cancellation, durable events, SSE replay and retention cleanup;
-- exact proposal confirmation with fresh price, stock and compatibility revalidation;
-- retryable failed confirmations and one successful cart draft per proposal;
-- payment disabled by design;
-- React/ECharts decision console served from the executable application.
+The LLM can supplement soft preferences and rank existing SKUs. Java policy code remains authoritative for category, budget, stock, compatibility, advertising, and transaction constraints.
 
-## Run locally
+## Engineering Highlights
 
-~~~bash
-mvn test
+- Domain Pack registry isolates catalogs, compatibility graphs, review aspects, and policies for 3C and outdoor-camping domains.
+- Retail Provider SPI supports local snapshots, HTTP providers, and a read-only Shopify GraphQL adapter with version, scope, response-shape, and freshness checks.
+- Asynchronous Run governance uses database admission, bounded executors, leases, fencing tokens, cancellation, idempotent replay, and SSE event recovery.
+- Confirmation creates only a cart draft with `paymentAuthorized=false`; no model path can place an order or initiate payment.
+
+## Reproducible Evidence
+
+The committed synthetic deterministic benchmark contains 1,200 SPUs and 120 scenarios:
+
+| Metric | Result |
+| --- | ---: |
+| Recall@10 | 95.83% |
+| NDCG@10 | 99.57% |
+| Hard-filter violations | 0 |
+| Advertising-policy violations | 0 |
+
+These are offline regression metrics generated from catalog attributes, not production conversion metrics or human relevance labels. The report is versioned at `src/main/resources/data/v2/retrieval_report.json`.
+
+## Run
+
+```powershell
 mvn spring-boot:run
-~~~
+```
 
-Open http://127.0.0.1:19090/. Rebuild the console after frontend changes:
+The application listens on `http://127.0.0.1:19090` and serves the bundled web interface from the same process. Local replay mode is deterministic and requires no external credential.
 
-~~~bash
-cd ../apps/commerce-console
-npm install
-npm run build
-~~~
+## Verify
 
-The browser suite starts and stops its own offline stack:
+```powershell
+mvn clean test
+```
 
-~~~bash
-cd ../apps/commerce-console
-npm run test:e2e
-~~~
+The normal suite covers the bounded collaboration chain, retrieval regression, Domain Packs, Shopify Mock GraphQL contracts, Run governance, identity isolation, SSE, idempotency, and transaction safety. The real-model evaluation is opt-in so CI never consumes model quota silently.
 
-## Java-native Shopify provider
+## Optional Real-Model Evaluation
 
-The default mode uses versioned local snapshots and needs no external credential. To read a real development, staging or production store, configure a read-only Shopify Admin token and let Java call the pinned GraphQL API directly:
+Provide an OpenAI-compatible endpoint through environment variables; never commit a key:
 
-~~~powershell
-$env:MOYUAN_SHOPIFY_ENABLED="true"
-$env:MOYUAN_SHOPIFY_STORE_DOMAIN="your-store.myshopify.com"
-$env:MOYUAN_SHOPIFY_ADMIN_ACCESS_TOKEN="replace-with-a-read-only-token"
-$env:MOYUAN_SHOPIFY_FALLBACK_ENABLED="false"
-$env:MOYUAN_SHOPIFY_CATALOG_CACHE_TTL="5m"
-mvn spring-boot:run
-~~~
-
-The adapter only sends three fixed read queries, requires `read_products`, rejects every `write_*` scope, disables redirects and proxy forwarding, pins Admin API `2026-07`, bounds request/response sizes and caches the catalog for five minutes. Reviews and prices are refreshed for every decision load; confirmation invalidates the catalog cache and reloads catalog metadata, reviews and quotes. A transient provider failure may use a local snapshot only when fallback is explicitly enabled, and snapshot pricing is never accepted during confirmation.
-
-`MOYUAN_RETAIL_PROVIDER_*` remains available for a generic HTTP implementation of the same Java Provider SPI. Generic HTTP and direct Shopify modes are mutually exclusive. Neither mode requires `server.py` or a Python process.
-
-## ModelPort integration
-
-~~~powershell
-$env:MOYUAN_MODELPORT_ENABLED="true"
-$env:MOYUAN_MODELPORT_URL="http://127.0.0.1:38082"
-$env:MOYUAN_MODELPORT_KEY="replace-with-a-scoped-client-key"
-$env:MOYUAN_MODELPORT_MODEL="deepseek-default"
-mvn spring-boot:run
-~~~
-
-Secrets remain in environment variables and must not be committed.
-
-## Verification boundary
-
-- 49 Java unit, integration and contract tests pass; one credentialed live-model benchmark is deliberately skipped.
-- 40 human-authored business cases gate routing, task completion, clarification, hard constraints and ad policy.
-- The synthetic retrieval suite has 120 queries over 1,200 generated SPUs. Labels come from catalog attributes, so this is a deterministic regression benchmark, not human relevance judgment.
-- Java Shopify tests use a deterministic mock GraphQL server. Without store credentials, no claim is made about a live Shopify store, online conversion or payment execution.
-
-See docs/PROJECT_REVIEW_CN.md for measured results, trade-offs and interview questions.
+```powershell
+$env:BUYSENSE_REAL_MODEL_EVAL='true'
+$env:MOYUAN_MODELPORT_URL='https://api.deepseek.com'
+$env:MOYUAN_MODELPORT_KEY=$env:DEEPSEEK_API_KEY
+$env:MOYUAN_MODELPORT_MODEL='deepseek-chat'
+mvn '-Dtest=BuySenseRealModelEvaluationTest' test
+```

@@ -12,9 +12,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public class RunRepository {
@@ -40,41 +43,57 @@ public class RunRepository {
             RunExecutionProperties properties,
             Instant now
     ) {
+        insertAdmitted(run, idempotencyKey, properties, now, null);
+    }
+
+    @Transactional
+    public void insertAdmitted(
+            AgentRun run,
+            String idempotencyKey,
+            RunExecutionProperties properties,
+            Instant now,
+            RunEvent initialEvent
+    ) {
         jdbc.queryForObject(
                 "select lock_id from run_admission_lock where lock_id = 'global' for update",
                 String.class);
-        if (countActiveBySession(run.getSessionId()) >= properties.maxActivePerSession()) {
-            throw new AdmissionRejectedException("session_concurrency_limit", false);
+        if (countActiveByIdentity(run.getIdentityId()) >= properties.maxActivePerIdentity()) {
+            throw new AdmissionRejectedException("identity_concurrency_limit", false);
         }
-        if (countCreatedSince(run.getSessionId(), now.minusSeconds(60))
+        if (countCreatedSinceIdentity(run.getIdentityId(), now.minusSeconds(60))
                 >= properties.maxCreatedPerMinute()) {
-            throw new AdmissionRejectedException("session_rate_limit", false);
+            throw new AdmissionRejectedException("identity_rate_limit", false);
         }
         long globalCapacity = (long) properties.maxConcurrent() + properties.queueCapacity();
         if (countActiveGlobal() >= globalCapacity) {
             throw new AdmissionRejectedException("run_queue_full", true);
         }
         insertRows(run, idempotencyKey);
+        if (initialEvent != null) insertEvent(run.getRunId(), initialEvent);
     }
 
     private void insertRows(AgentRun run, String idempotencyKey) {
         jdbc.update("""
                         insert into agent_runs (
-                            run_id, session_id, message, status, result_json, error_message,
-                            confirmation_requested, domain_pack_id, workflow_id, proposal_run_id,
+                            run_id, identity_id, session_id, message, status, result_json,
+                            error_message, error_code, confirmation_requested,
+                            domain_pack_id, workflow_id, proposal_run_id, idempotency_key,
                             result_phase, cart_draft_json, cancellation_requested, created_at, updated_at
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                 run.getRunId(),
+                run.getIdentityId(),
                 run.getSessionId(),
                 run.getMessage(),
                 run.getStatus(),
                 writeNullable(run.getResult()),
                 run.getError(),
+                run.getErrorCode(),
                 run.isConfirmationRequested(),
                 run.getDomainPackId(),
                 run.getWorkflowId(),
                 run.getProposalRunId(),
+                idempotencyKey,
                 run.getPhase(),
                 writeNullable(run.getCartDraft()),
                 run.isCancellationRequested(),
@@ -82,10 +101,14 @@ public class RunRepository {
                 Timestamp.from(run.getUpdatedAt()));
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             jdbc.update("""
-                            insert into idempotency_keys (session_id, idempotency_key, run_id, created_at)
-                            values (?, ?, ?, ?)
+                            insert into idempotency_keys (
+                                identity_id, idempotency_key, run_id, request_fingerprint, created_at
+                            ) values (?, ?, ?, ?, ?)
                             """,
-                    run.getSessionId(), idempotencyKey, run.getRunId(), Timestamp.from(Instant.now()));
+                    run.getIdentityId(), idempotencyKey, run.getRunId(),
+                    requestFingerprint(run.getMessage(), run.isConfirmationRequested(),
+                            run.getDomainPackId(), run.getWorkflowId(), run.getProposalRunId()),
+                    Timestamp.from(Instant.now()));
         }
         if (run.isConfirmationRequested()) {
             jdbc.update("""
@@ -96,31 +119,64 @@ public class RunRepository {
                     run.getProposalRunId(), run.getRunId(), Timestamp.from(Instant.now()));
         }
     }
-    public Optional<String> findIdempotentRun(String sessionId, String idempotencyKey) {
+    public Optional<String> findIdempotentRun(String identityId, String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) return Optional.empty();
         List<String> matches = jdbc.query("""
                         select run_id from idempotency_keys
-                        where session_id = ? and idempotency_key = ?
+                        where identity_id = ? and idempotency_key = ?
                         """,
                 (rs, rowNum) -> rs.getString("run_id"),
-                sessionId, idempotencyKey);
+                identityId, idempotencyKey);
         return matches.stream().findFirst();
     }
 
-    public long countActiveBySession(String sessionId) {
+    public long countActiveByIdentity(String identityId) {
         Long count = jdbc.queryForObject("""
                 select count(*) from agent_runs
-                where session_id = ? and status in ('queued', 'running')
-                """, Long.class, sessionId);
+                where identity_id = ? and status in ('queued', 'running')
+                """, Long.class, identityId);
         return count == null ? 0 : count;
     }
 
-    public long countCreatedSince(String sessionId, Instant since) {
+    public long countCreatedSinceIdentity(String identityId, Instant since) {
         Long count = jdbc.queryForObject("""
                 select count(*) from agent_runs
-                where session_id = ? and created_at >= ?
-                """, Long.class, sessionId, Timestamp.from(since));
+                where identity_id = ? and created_at >= ?
+                """, Long.class, identityId, Timestamp.from(since));
         return count == null ? 0 : count;
+    }
+
+    public InteractionContext discoveryContext(String identityId) {
+        Boolean enabled = jdbc.query(
+                "select personalization_enabled from identity_preferences where identity_id = ?",
+                rs -> rs.next() ? rs.getBoolean(1) : null,
+                identityId);
+        List<InteractionRow> rows = jdbc.query("""
+                        select event_type, product_id from interaction_events
+                        where identity_id = ? and product_id is not null
+                        order by occurred_at desc limit 100
+                        """,
+                (rs, rowNum) -> new InteractionRow(
+                        rs.getString("event_type"), rs.getString("product_id")),
+                identityId);
+        return new InteractionContext(
+                enabled == null || enabled,
+                interactionIds(rows, Set.of("view", "click", "cart", "purchase"), 30),
+                interactionIds(rows, Set.of("dislike"), 50),
+                interactionIds(rows, Set.of("ad_impression"), 50));
+    }
+
+    private List<String> interactionIds(
+            List<InteractionRow> rows,
+            Set<String> eventTypes,
+            int limit
+    ) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        for (InteractionRow row : rows) {
+            if (eventTypes.contains(row.eventType())) values.add(row.productId());
+            if (values.size() >= limit) break;
+        }
+        return List.copyOf(values);
     }
 
     public long countActiveGlobal() {
@@ -131,14 +187,106 @@ public class RunRepository {
         return count == null ? 0 : count;
     }
 
-    public Optional<String> findConfirmationByProposal(String proposalRunId) {
+    public Optional<String> findConfirmationByProposal(String identityId, String proposalRunId) {
         if (proposalRunId == null || proposalRunId.isBlank()) return Optional.empty();
         List<String> matches = jdbc.query("""
-                select confirmation_run_id
-                from proposal_confirmation_claims
-                where proposal_run_id = ?
-                """, (rs, rowNum) -> rs.getString("confirmation_run_id"), proposalRunId);
+                select run_id
+                from agent_runs
+                where identity_id = ? and proposal_run_id = ?
+                """, (rs, rowNum) -> rs.getString("run_id"), identityId, proposalRunId);
         return matches.stream().findFirst();
+    }
+
+    public String requestFingerprint(
+            String message,
+            boolean confirmed,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
+        Map<String, Object> fingerprint = new LinkedHashMap<>();
+        fingerprint.put("message", message);
+        fingerprint.put("confirmed", confirmed);
+        fingerprint.put("domainPackId", domainPackId);
+        fingerprint.put("workflowId", workflowId);
+        fingerprint.put("proposalRunId", proposalRunId);
+        return write(fingerprint);
+    }
+
+    public boolean idempotencyMatches(
+            String identityId,
+            String idempotencyKey,
+            String requestFingerprint
+    ) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) return false;
+        List<String> values = jdbc.query("""
+                        select request_fingerprint from idempotency_keys
+                        where identity_id = ? and idempotency_key = ?
+                        """,
+                (rs, rowNum) -> rs.getString("request_fingerprint"),
+                identityId, idempotencyKey);
+        if (values.isEmpty()) return false;
+        String stored = values.get(0);
+        if (stored != null) return stored.equals(requestFingerprint);
+        Optional<String> runId = findIdempotentRun(identityId, idempotencyKey);
+        return runId.flatMap(this::findById)
+                .map(run -> requestFingerprint(
+                        run.getMessage(), run.isConfirmationRequested(), run.getDomainPackId(),
+                        run.getWorkflowId(), run.getProposalRunId()).equals(requestFingerprint))
+                .orElse(false);
+    }
+
+    @Transactional
+    public void addIdempotencyAlias(
+            String identityId,
+            String idempotencyKey,
+            String runId,
+            String requestFingerprint
+    ) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) return;
+        jdbc.update("""
+                        insert into idempotency_keys (
+                            identity_id, idempotency_key, run_id, request_fingerprint, created_at
+                        ) values (?, ?, ?, ?, ?)
+                        """,
+                identityId, idempotencyKey, runId, requestFingerprint, Timestamp.from(Instant.now()));
+    }
+
+    @Transactional
+    public void resetConfirmationForRetry(AgentRun run, String idempotencyKey) {
+        resetConfirmationForRetry(
+                run,
+                idempotencyKey,
+                requestFingerprint(
+                        run.getMessage(), run.isConfirmationRequested(), run.getDomainPackId(),
+                        run.getWorkflowId(), run.getProposalRunId()));
+    }
+
+    @Transactional
+    public void resetConfirmationForRetry(
+            AgentRun run,
+            String idempotencyKey,
+            String requestFingerprint
+    ) {
+        Instant retryAt = Instant.now();
+        int updated = jdbc.update("""
+                        update agent_runs
+                        set status = 'queued', result_json = null,
+                            error_message = null, error_code = null,
+                            result_phase = null, cart_draft_json = null,
+                            cancellation_requested = false,
+                            lease_owner = null, lease_expires_at = null,
+                            updated_at = ?
+                        where run_id = ? and identity_id = ?
+                          and status in ('failed', 'cancelled')
+                        """,
+                Timestamp.from(retryAt), run.getRunId(), run.getIdentityId());
+        if (updated != 1) {
+            throw new IllegalStateException("confirmation_retry_race");
+        }
+        addIdempotencyAlias(
+                run.getIdentityId(), idempotencyKey, run.getRunId(), requestFingerprint);
+        run.resetForRetry(retryAt);
     }
     @Transactional
     public Optional<Lease> acquireLease(
@@ -210,7 +358,6 @@ public class RunRepository {
     @Transactional
     public void update(AgentRun run) {
         updateColumns(run);
-        releaseRetryableConfirmationClaim(run);
     }
 
     @Transactional
@@ -224,7 +371,6 @@ public class RunRepository {
     public void updateWithEvent(AgentRun run, RunEvent event) {
         insertEvent(run.getRunId(), event);
         updateColumns(run);
-        releaseRetryableConfirmationClaim(run);
     }
     @Transactional
     public void appendEventFenced(
@@ -242,7 +388,7 @@ public class RunRepository {
         insertEvent(run.getRunId(), event);
         int updated = jdbc.update("""
                         update agent_runs
-                        set status = ?, result_json = ?, error_message = ?,
+                        set status = ?, result_json = ?, error_message = ?, error_code = ?,
                             result_phase = ?, cart_draft_json = ?,
                             cancellation_requested = ?, updated_at = ?
                         where run_id = ?
@@ -253,6 +399,7 @@ public class RunRepository {
                 run.getStatus(),
                 writeNullable(run.getResult()),
                 run.getError(),
+                run.getErrorCode(),
                 run.getPhase(),
                 writeNullable(run.getCartDraft()),
                 run.isCancellationRequested(),
@@ -262,7 +409,6 @@ public class RunRepository {
                 lease.token(),
                 Timestamp.from(Instant.now()));
         if (updated != 1) throw new LeaseLostException(run.getRunId());
-        releaseRetryableConfirmationClaim(run);
     }
 
     private void requireLease(String runId, Instant updatedAt, Lease lease) {
@@ -284,30 +430,24 @@ public class RunRepository {
     private void insertEvent(String runId, RunEvent event) {
         jdbc.update("""
                         insert into run_events (
-                            event_id, run_id, sequence_no, event_type, event_time, payload_json
-                        ) values (?, ?, ?, ?, ?, ?)
+                            event_id, run_id, task_id, parent_task_id, sequence_no, event_type, event_time, schema_version, payload_json
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                 event.eventId(),
                 runId,
+                event.taskId(),
+                event.parentTaskId(),
                 event.sequence(),
                 event.eventType(),
                 Timestamp.from(event.timestamp()),
+                event.schemaVersion(),
                 write(event.payload()));
     }
 
-    private void releaseRetryableConfirmationClaim(AgentRun run) {
-        if (run.isConfirmationRequested()
-                && ("failed".equals(run.getStatus()) || "cancelled".equals(run.getStatus()))) {
-            jdbc.update("""
-                    delete from proposal_confirmation_claims
-                    where confirmation_run_id = ?
-                    """, run.getRunId());
-        }
-    }
     private void updateColumns(AgentRun run) {
         jdbc.update("""
                         update agent_runs
-                        set status = ?, result_json = ?, error_message = ?,
+                        set status = ?, result_json = ?, error_message = ?, error_code = ?,
                             result_phase = ?, cart_draft_json = ?,
                             cancellation_requested = ?, updated_at = ?
                         where run_id = ?
@@ -315,6 +455,7 @@ public class RunRepository {
                 run.getStatus(),
                 writeNullable(run.getResult()),
                 run.getError(),
+                run.getErrorCode(),
                 run.getPhase(),
                 writeNullable(run.getCartDraft()),
                 run.isCancellationRequested(),
@@ -354,9 +495,9 @@ public class RunRepository {
 
     private static String selectRuns(String suffix) {
         return """
-                select run_id, session_id, message, confirmation_requested,
-                       domain_pack_id, workflow_id, proposal_run_id,
-                       status, result_json, error_message, result_phase, cart_draft_json,
+                select run_id, identity_id, session_id, message, confirmation_requested,
+                       domain_pack_id, workflow_id, proposal_run_id, idempotency_key,
+                       status, result_json, error_message, error_code, result_phase, cart_draft_json,
                        cancellation_requested, created_at, updated_at
                 from agent_runs
                 """ + suffix + " order by created_at";
@@ -364,13 +505,16 @@ public class RunRepository {
 
     private AgentRun restore(RunRow row) {
         List<RunEvent> events = jdbc.query("""
-                        select event_id, sequence_no, event_type, event_time, payload_json
+                        select event_id, task_id, parent_task_id, sequence_no, event_type, event_time, payload_json
                         from run_events
                         where run_id = ?
                         order by sequence_no
                         """,
                 (rs, rowNum) -> new RunEvent(
                         rs.getString("event_id"),
+                        row.runId(),
+                        rs.getString("task_id"),
+                        rs.getString("parent_task_id"),
                         rs.getLong("sequence_no"),
                         rs.getString("event_type"),
                         instant(rs, "event_time"),
@@ -384,17 +528,20 @@ public class RunRepository {
                 : read(row.cartDraftJson(), AgentRun.CartDraftState.class);
         return AgentRun.restore(
                 row.runId(),
+                row.identityId(),
                 row.sessionId(),
                 row.message(),
                 row.confirmationRequested(),
                 row.domainPackId(),
                 row.workflowId(),
                 row.proposalRunId(),
+                row.idempotencyKey(),
                 row.status(),
                 row.createdAt(),
                 row.updatedAt(),
                 result,
                 row.error(),
+                row.errorCode(),
                 row.phase(),
                 cartDraft,
                 row.cancellationRequested(),
@@ -404,15 +551,18 @@ public class RunRepository {
     private RunRow row(ResultSet rs) throws SQLException {
         return new RunRow(
                 rs.getString("run_id"),
+                rs.getString("identity_id"),
                 rs.getString("session_id"),
                 rs.getString("message"),
                 rs.getBoolean("confirmation_requested"),
                 rs.getString("domain_pack_id"),
                 rs.getString("workflow_id"),
                 rs.getString("proposal_run_id"),
+                rs.getString("idempotency_key"),
                 rs.getString("status"),
                 rs.getString("result_json"),
                 rs.getString("error_message"),
+                rs.getString("error_code"),
                 rs.getString("result_phase"),
                 rs.getString("cart_draft_json"),
                 rs.getBoolean("cancellation_requested"),
@@ -470,6 +620,17 @@ public class RunRepository {
             return overloaded;
         }
     }
+    public record InteractionContext(
+            boolean personalizationEnabled,
+            List<String> recentProductIds,
+            List<String> excludedProductIds,
+            List<String> adExposureProductIds
+    ) {
+    }
+
+    private record InteractionRow(String eventType, String productId) {
+    }
+
     public record Lease(String owner, long token, Instant expiresAt) {
     }
 
@@ -480,15 +641,18 @@ public class RunRepository {
     }
     private record RunRow(
             String runId,
+            String identityId,
             String sessionId,
             String message,
             boolean confirmationRequested,
             String domainPackId,
             String workflowId,
             String proposalRunId,
+            String idempotencyKey,
             String status,
             String resultJson,
             String error,
+            String errorCode,
             String phase,
             String cartDraftJson,
             boolean cancellationRequested,

@@ -106,7 +106,7 @@ class RunGovernanceTest {
     }
 
     @Test
-    void failedConfirmationReleasesItsClaimSoTheProposalCanBeRetried() {
+    void failedConfirmationResetsTheSameRunForRetry() {
         String proposalId = UUID.randomUUID().toString();
         repository.insert(new AgentRun(
                 proposalId,
@@ -137,18 +137,13 @@ class RunGovernanceTest {
                         Instant.now(),
                         Map.of("event", "run_failed")));
 
-        AgentRun retry = new AgentRun(
-                UUID.randomUUID().toString(),
-                "retry-session",
-                "confirm again",
-                true,
-                "normal-3c-v1",
-                "commerce-decision-v1",
-                proposalId);
-        repository.insert(retry, "retry-key-b");
+        repository.resetConfirmationForRetry(failed, "retry-key-b");
 
-        assertThat(repository.findConfirmationByProposal(proposalId))
-                .contains(retry.getRunId());
+        assertThat(repository.findConfirmationByProposal("id_retry-session", proposalId))
+                .contains(failed.getRunId());
+        assertThat(failed.getStatus()).isEqualTo("queued");
+        assertThat(repository.findIdempotentRun("id_retry-session", "retry-key-b"))
+                .contains(failed.getRunId());
     }
 
     @Test
@@ -189,10 +184,10 @@ class RunGovernanceTest {
                 Instant.now()))
                 .isInstanceOf(RunRepository.AdmissionRejectedException.class)
                 .extracting(error -> ((RunRepository.AdmissionRejectedException) error).code())
-                .isEqualTo("session_concurrency_limit");
+                .isEqualTo("identity_concurrency_limit");
     }
     @Test
-    void rejectsAFourthActiveRunForTheSameSessionBeforeQueueing() {
+    void rejectsAFourthActiveRunForTheSameIdentityBeforeQueueing() {
         String sessionId = "capacity-" + UUID.randomUUID();
         for (int index = 0; index < 3; index++) {
             repository.insert(new AgentRun(
@@ -215,7 +210,7 @@ class RunGovernanceTest {
                 null))
                 .isInstanceOf(RunService.RunCapacityException.class)
                 .extracting(error -> ((RunService.RunCapacityException) error).code())
-                .isEqualTo("session_concurrency_limit");
+                .isEqualTo("identity_concurrency_limit");
     }
 
     private static AgentRun run(String prefix) {

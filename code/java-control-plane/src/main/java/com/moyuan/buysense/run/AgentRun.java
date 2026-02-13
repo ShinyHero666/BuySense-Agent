@@ -12,12 +12,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class AgentRun {
     private final String runId;
+    private final String identityId;
     private final String sessionId;
     private final String message;
     private final boolean confirmationRequested;
     private final String domainPackId;
     private final String workflowId;
     private final String proposalRunId;
+    private final String idempotencyKey;
     private final Instant createdAt;
     private final List<RunEvent> events = new CopyOnWriteArrayList<>();
     private final AtomicBoolean cancellationRequested = new AtomicBoolean();
@@ -25,6 +27,7 @@ public final class AgentRun {
     private volatile Instant updatedAt;
     private volatile DecisionResult result;
     private volatile String error;
+    private volatile String errorCode;
     private volatile String phase;
     private volatile CartDraftState cartDraft;
 
@@ -46,27 +49,60 @@ public final class AgentRun {
             String workflowId,
             String proposalRunId
     ) {
-        this(runId, sessionId, message, confirmationRequested, domainPackId,
-                workflowId, proposalRunId, Instant.now());
+        this(runId, "id_" + sessionId, sessionId, message, confirmationRequested,
+                domainPackId, workflowId, proposalRunId, null, Instant.now());
     }
 
-    private AgentRun(
+    public AgentRun(
             String runId,
+            String identityId,
+            String sessionId,
+            String message,
+            boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
+        this(runId, identityId, sessionId, message, confirmationRequested,
+                domainPackId, workflowId, proposalRunId, null, Instant.now());
+    }
+
+    public AgentRun(
+            String runId,
+            String identityId,
             String sessionId,
             String message,
             boolean confirmationRequested,
             String domainPackId,
             String workflowId,
             String proposalRunId,
+            String idempotencyKey
+    ) {
+        this(runId, identityId, sessionId, message, confirmationRequested,
+                domainPackId, workflowId, proposalRunId, idempotencyKey, Instant.now());
+    }
+
+    private AgentRun(
+            String runId,
+            String identityId,
+            String sessionId,
+            String message,
+            boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId,
+            String idempotencyKey,
             Instant createdAt
     ) {
         this.runId = runId;
+        this.identityId = identityId;
         this.sessionId = sessionId;
         this.message = message;
         this.confirmationRequested = confirmationRequested;
         this.domainPackId = domainPackId;
         this.workflowId = workflowId;
         this.proposalRunId = proposalRunId;
+        this.idempotencyKey = idempotencyKey;
         this.status = "queued";
         this.createdAt = createdAt;
         this.updatedAt = createdAt;
@@ -74,29 +110,33 @@ public final class AgentRun {
 
     public static AgentRun restore(
             String runId,
+            String identityId,
             String sessionId,
             String message,
             boolean confirmationRequested,
             String domainPackId,
             String workflowId,
             String proposalRunId,
+            String idempotencyKey,
             String status,
             Instant createdAt,
             Instant updatedAt,
             DecisionResult result,
             String error,
+            String errorCode,
             String phase,
             CartDraftState cartDraft,
             boolean cancellationRequested,
             List<RunEvent> events
     ) {
         AgentRun run = new AgentRun(
-                runId, sessionId, message, confirmationRequested, domainPackId,
-                workflowId, proposalRunId, createdAt);
+                runId, identityId, sessionId, message, confirmationRequested,
+                domainPackId, workflowId, proposalRunId, idempotencyKey, createdAt);
         run.status = status;
         run.updatedAt = updatedAt;
         run.result = result;
         run.error = error;
+        run.errorCode = errorCode;
         run.phase = phase;
         run.cartDraft = cartDraft;
         run.cancellationRequested.set(cancellationRequested);
@@ -105,17 +145,20 @@ public final class AgentRun {
     }
 
     public String getRunId() { return runId; }
+    public String getIdentityId() { return identityId; }
     public String getSessionId() { return sessionId; }
     public String getMessage() { return message; }
     public boolean isConfirmationRequested() { return confirmationRequested; }
     public String getDomainPackId() { return domainPackId; }
     public String getWorkflowId() { return workflowId; }
     public String getProposalRunId() { return proposalRunId; }
+    public String getIdempotencyKey() { return idempotencyKey; }
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public DecisionResult getResult() { return result; }
     public String getError() { return error; }
+    public String getErrorCode() { return errorCode; }
     public String getPhase() { return phase; }
     public CartDraftState getCartDraft() { return cartDraft; }
     public List<RunEvent> getEvents() { return List.copyOf(events); }
@@ -137,18 +180,16 @@ public final class AgentRun {
 
     public synchronized void prepareResult(DecisionResult result, String phase) {
         this.result = result;
+        this.error = null;
+        this.errorCode = null;
         this.phase = phase;
-        this.updatedAt = Instant.now();
-    }
-
-    public synchronized void prepareClarification(DecisionResult result) {
-        this.result = result;
-        this.phase = "clarification";
         this.updatedAt = Instant.now();
     }
 
     public synchronized void prepareCartDraft(DecisionResult result, CartDraftState cartDraft) {
         this.result = result;
+        this.error = null;
+        this.errorCode = null;
         this.cartDraft = cartDraft;
         this.phase = "cart_draft";
         this.updatedAt = Instant.now();
@@ -161,16 +202,30 @@ public final class AgentRun {
 
     public synchronized void fail(Throwable throwable) {
         this.error = throwable.getMessage();
+        this.errorCode = "agent_execution_failed";
         transition("failed");
     }
 
     public synchronized void prepareFailure(Throwable throwable) {
         this.error = throwable.getMessage();
+        this.errorCode = "agent_execution_failed";
         this.updatedAt = Instant.now();
+    }
+
+    public synchronized void resetForRetry(Instant retryAt) {
+        this.status = "queued";
+        this.result = null;
+        this.error = null;
+        this.errorCode = null;
+        this.phase = null;
+        this.cartDraft = null;
+        this.cancellationRequested.set(false);
+        this.updatedAt = retryAt;
     }
 
     public void cancel() {
         cancellationRequested.set(true);
+        errorCode = "run_cancelled";
         transition("cancelled");
     }
 

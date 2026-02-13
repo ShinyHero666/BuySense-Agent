@@ -329,7 +329,14 @@ public final class RetailDataGateway {
                             stock,
                             source.source(),
                             source.sourceVersion(),
-                            source.providerId()));
+                            source.providerId(),
+                            spuId,
+                            skuId,
+                            offerId,
+                            offer.path("currency").asText("CNY"),
+                            version,
+                            root.path("quote_version").asText(version),
+                            offer.path("valid_until").asText("")));
                     if (metadata.containsKey(productId)) {
                         throw new IllegalArgumentException("duplicate catalog product id");
                     }
@@ -382,8 +389,11 @@ public final class RetailDataGateway {
                     product.id(), product.name(), product.category(), product.brand(), amount,
                     product.tags(), product.qualityScore(), product.popularityScore(),
                     product.sponsored(), product.bidScore(), product.compatibilityGroup(),
-                    stock, "remote_provider", text(root.path("data_source"), "source_version"),
-                    remoteProviderId));
+                    stock, product.source(), product.sourceVersion(), product.providerId(),
+                    product.productId(), product.skuId(), product.offerId(),
+                    quote.path("currency").asText("CNY"), product.catalogVersion(),
+                    root.path("quote_version").asText(text(root.path("data_source"), "source_version")),
+                    quote.path("valid_until").asText("")));
             metadata.put(product.id(), new CatalogItemMetadata(
                     item.spuId(), item.offerId(), stock, item.connectors(), item.protocols(),
                     "remote_provider", text(root.path("data_source"), "source_version"), remoteProviderId));
@@ -513,7 +523,7 @@ public final class RetailDataGateway {
     }
 
     private JsonNode read(String resource) throws IOException {
-        try (InputStream input = new ClassPathResource(resource).getInputStream()) {
+        try (InputStream input = new ClassPathResource("data/" + resource).getInputStream()) {
             return mapper.readTree(input);
         }
     }

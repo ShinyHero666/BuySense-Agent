@@ -32,8 +32,7 @@ public class FrontendContractMapper {
                             draft.totalPrice(),
                             draft.expiresAt(),
                             draft.paymentAuthorized()));
-        } else if (run.getResult() != null && "clarification".equals(run.getPhase())) {
-            reply = clarification(run.getResult());
+
         } else if (run.getResult() != null) {
             reply = proposal(run.getResult());
         } else if ("no_pending_decision".equals(run.getPhase())
@@ -46,10 +45,9 @@ public class FrontendContractMapper {
         } else {
             reply = null;
         }
-        String errorCode = run.getError() == null ? null : "RUN_EXECUTION_FAILED";
         return new RunView(
                 run.getRunId(),
-                "anonymous:" + run.getSessionId(),
+                run.getIdentityId(),
                 run.getSessionId(),
                 run.getDomainPackId(),
                 run.getWorkflowId(),
@@ -57,8 +55,9 @@ public class FrontendContractMapper {
                 run.getMessage(),
                 run.isConfirmationRequested(),
                 run.getProposalRunId(),
+                run.getIdempotencyKey(),
                 reply,
-                errorCode,
+                run.getErrorCode(),
                 run.getCreatedAt(),
                 run.getUpdatedAt(),
                 run.isCancellationRequested());
@@ -70,20 +69,6 @@ public class FrontendContractMapper {
                 decision.critique().verdict().equals("approved") ? "proposal" : "needs_replan",
                 decision.message(),
                 decision,
-                null);
-    }
-
-    public BuyerReply clarification(DecisionResult result) {
-        DecisionResult.ModelRuntime runtime = result.runtime() == null
-                ? DecisionResult.offlineRuntime()
-                : result.runtime();
-        String question = hasText(runtime.clarificationQuestion())
-                ? runtime.clarificationQuestion()
-                : "请补充产品类别、使用场景和预算上限。";
-        return new BuyerReply(
-                "clarification",
-                question,
-                decision(result),
                 null);
     }
 
@@ -101,16 +86,16 @@ public class FrontendContractMapper {
         List<String> channels = new ArrayList<>(List.of("search", "recommendation"));
         if (requirement.sponsoredAllowed()) channels.add("ads");
 
-        List<ConstraintView> constraints = IntStream.range(0, requirement.constraints().size())
-                .mapToObj(index -> {
-                    Requirement.Constraint constraint = requirement.constraints().get(index);
-                    return new ConstraintView(
-                            "constraint-" + (index + 1),
-                            constraint.field(),
-                            constraint.source().name().toLowerCase(),
-                            constraint.strength().name().toLowerCase(),
-                            constraint.confidence());
-                })
+        List<ConstraintView> constraints = requirement.constraints().stream()
+                .map(constraint -> new ConstraintView(
+                        constraint.constraintId(),
+                        constraint.field(),
+                        constraint.value(),
+                        constraint.source().name().toLowerCase(),
+                        constraint.strength().name().toLowerCase(),
+                        constraint.confidence(),
+                        constraint.turnId(),
+                        constraint.status().name().toLowerCase()))
                 .toList();
         Plan plan = new Plan(
                 requirement.originalQuery(),
@@ -119,15 +104,13 @@ public class FrontendContractMapper {
                         : requirement.originalQuery(),
                 hasText(modelRuntime.intent())
                         ? modelRuntime.intent()
-                        : requirement.bundleRequested() ? "bundle_recommendation" : "product_recommendation",
+                        : requirement.bundleRequested() ? "bundle" : "catalog",
                 List.copyOf(channels),
                 requirement.sponsoredAllowed(),
                 new Requirements(
                         requirement.budget(),
-                        requirement.preferredBrand().isBlank()
-                                ? List.of()
-                                : List.of(requirement.preferredBrand()),
-                        requirement.requiredCategories().stream().sorted().toList(),
+                        requirement.preferredBrands(),
+                        requirement.requiredCategories(),
                         requirement.useCases(),
                         constraints));
         return new Decision(
@@ -156,7 +139,7 @@ public class FrontendContractMapper {
                     .toList();
             List<Alternative> alternatives = result.bundles().stream().skip(1)
                     .map(proposal -> new Alternative(
-                            proposal.items().stream().map(Product::id).toList(),
+                            proposal.items().stream().map(Product::skuId).toList(),
                             proposal.totalPrice(),
                             proposal.score(),
                             proposal.items().stream().filter(Product::sponsored).count()))
@@ -180,31 +163,33 @@ public class FrontendContractMapper {
     }
 
     private Critique critique(DecisionResult result, BundleView bundle) {
-        Requirement requirement = result.requirement();
-        List<String> violations = new ArrayList<>();
-        boolean hasCandidates = !result.slate().isEmpty();
-        boolean hasRequiredBundle = !requirement.bundleRequested() || !result.bundles().isEmpty();
-        boolean budget = !bundle.items().isEmpty() && bundle.withinBudget();
-        boolean compatibility = result.bundles().isEmpty()
-                || result.bundles().get(0).compatible();
-        boolean adPolicy = result.slate().stream().limit(3).filter(Candidate::sponsored).count() <= 1
-                && (requirement.sponsoredAllowed()
-                || result.slate().stream().noneMatch(Candidate::sponsored));
-        if (!hasCandidates) violations.add("no_candidates");
-        if (!hasRequiredBundle) violations.add("no_feasible_bundle");
-        if (!budget) violations.add("budget_constraint");
-        if (!compatibility) violations.add("compatibility_constraint");
-        if (!adPolicy) violations.add("ad_policy");
-
         Map<String, Boolean> checks = new LinkedHashMap<>();
-        checks.put("candidate_available", hasCandidates);
-        checks.put("required_bundle", hasRequiredBundle);
-        checks.put("budget", budget);
-        checks.put("compatibility", compatibility);
-        checks.put("ad_policy", adPolicy);
-        checks.put("inventory", hasCandidates);
-        return new Critique(violations.isEmpty() ? "approved" : "vetoed",
-                List.copyOf(violations), Map.copyOf(checks));
+        Object rawChecks = result.metrics().get("criticChecks");
+        if (rawChecks instanceof Map<?, ?> values) {
+            values.forEach((key, value) -> {
+                if (key != null && value instanceof Boolean passed) {
+                    checks.put(key.toString(), passed);
+                }
+            });
+        }
+        List<String> violations = new ArrayList<>();
+        Object rawViolations = result.metrics().get("criticViolations");
+        if (rawViolations instanceof List<?> values) {
+            values.stream().filter(String.class::isInstance).map(String.class::cast)
+                    .forEach(violations::add);
+        }
+        String verdict = String.valueOf(result.metrics().getOrDefault(
+                "criticVerdict", violations.isEmpty() ? "approved" : "vetoed"));
+        if (checks.isEmpty()) {
+            boolean candidateAvailable = !result.slate().isEmpty();
+            boolean budget = !bundle.items().isEmpty() && bundle.withinBudget();
+            checks.put("candidate_available", candidateAvailable);
+            checks.put("budget_respected", budget);
+            if (!candidateAvailable) violations.add("candidate_available");
+            if (!budget) violations.add("budget_respected");
+            verdict = violations.isEmpty() ? "approved" : "vetoed";
+        }
+        return new Critique(verdict, List.copyOf(violations), Map.copyOf(checks));
     }
 
     private CandidateView candidateForProduct(Product product, List<Candidate> slate, double maxScore) {
@@ -231,7 +216,7 @@ public class FrontendContractMapper {
     }
 
     private ProductView product(Product product) {
-        return new ProductView(product.id(), product.id(), product.name(), product.category(),
+        return new ProductView(product.productId(), product.skuId(), product.name(), product.category(),
                 product.brand(), product.price(), product.stock(), product.tags(),
                 product.source(), product.sourceVersion(), product.providerId());
     }
@@ -250,6 +235,7 @@ public class FrontendContractMapper {
             String message,
             boolean confirmed,
             String proposalRunId,
+            String idempotencyKey,
             BuyerReply result,
             String errorCode,
             Instant createdAt,
@@ -300,9 +286,12 @@ public class FrontendContractMapper {
     public record ConstraintView(
             String constraintId,
             String field,
+            Object value,
             String source,
             String strength,
-            double confidence
+            double confidence,
+            String turnId,
+            String status
     ) {
     }
 

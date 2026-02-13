@@ -2,9 +2,11 @@ package com.moyuan.buysense.web;
 
 import com.moyuan.buysense.retail.RetailDataGateway;
 import com.moyuan.buysense.run.RunService;
+import com.moyuan.sar.data.JavaDataPlaneValidationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -17,24 +19,30 @@ public class ApiExceptionHandler {
     ResponseEntity<Map<String, Object>> notFound(NoSuchElementException error) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
                 "error", "not_found",
-                "message", error.getMessage()));
+                "message", "resource not found"));
+    }
+
+    @ExceptionHandler(SessionIdentity.CrossSiteRequestException.class)
+    ResponseEntity<Map<String, Object>> crossSite() {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                "error", "cross_site_request_rejected",
+                "message", "cross-site state-changing request was rejected"));
     }
 
     @ExceptionHandler(RunService.RunCapacityException.class)
     ResponseEntity<Map<String, Object>> runCapacity(RunService.RunCapacityException error) {
         HttpStatus status = error.overloaded()
-                ? HttpStatus.SERVICE_UNAVAILABLE
-                : HttpStatus.TOO_MANY_REQUESTS;
-        return ResponseEntity.status(status).body(Map.of(
+                ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.TOO_MANY_REQUESTS;
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Retry-After", "1");
+        return new ResponseEntity<>(Map.of(
                 "error", error.code(),
-                "message", error.getMessage()));
+                "message", error.getMessage()), headers, status);
     }
+
     @ExceptionHandler(RunService.RunContractException.class)
     ResponseEntity<Map<String, Object>> runContract(RunService.RunContractException error) {
-        HttpStatus status = error.code().equals("idempotency_key_reused")
-                ? HttpStatus.CONFLICT
-                : HttpStatus.UNPROCESSABLE_ENTITY;
-        return ResponseEntity.status(status).body(Map.of(
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
                 "error", error.code(),
                 "message", error.getMessage()));
     }
@@ -46,17 +54,43 @@ public class ApiExceptionHandler {
                 "message", "retail data provider unavailable"));
     }
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, Object>> invalidArgument(IllegalArgumentException error) {
+    @ExceptionHandler(JavaDataPlaneValidationException.class)
+    ResponseEntity<Map<String, Object>> dataPlaneValidation(
+            JavaDataPlaneValidationException error
+    ) {
         return ResponseEntity.badRequest().body(Map.of(
-                "error", "invalid_request",
+                "error", "validation_error",
+                "field", error.field(),
                 "message", error.getMessage()));
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    ResponseEntity<Map<String, Object>> validation(MethodArgumentNotValidException error) {
+    @ExceptionHandler(AgentController.RequestValidationException.class)
+    ResponseEntity<Map<String, Object>> requestValidation(
+            AgentController.RequestValidationException error
+    ) {
         return ResponseEntity.badRequest().body(Map.of(
-                "error", "invalid_request",
-                "message", "message must be present and no longer than 4000 characters"));
+                "error", "validation_error",
+                "field", error.field(),
+                "message", error.getMessage()));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<Map<String, Object>> unreadable(HttpMessageNotReadableException error) {
+        Throwable cause = error.getMostSpecificCause();
+        if (cause instanceof AgentController.RequestValidationException validation) {
+            return requestValidation(validation);
+        }
+        return ResponseEntity.badRequest().body(Map.of(
+                "error", "validation_error",
+                "field", "body",
+                "message", "request body does not match the API contract"));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<Map<String, Object>> invalidArgument(IllegalArgumentException error) {
+        return ResponseEntity.badRequest().body(Map.of(
+                "error", "validation_error",
+                "field", "request",
+                "message", error.getMessage()));
     }
 }

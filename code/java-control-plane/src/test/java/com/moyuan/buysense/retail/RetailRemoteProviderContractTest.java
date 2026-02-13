@@ -169,7 +169,7 @@ class RetailRemoteProviderContractTest {
         if (exchange.getRequestMethod().equals("GET")
                 && path.equals("/v1/catalog/normal-3c-v1")) {
             ObjectNode catalog = (ObjectNode) readAsset(
-                    "retail-data/normal_3c_catalog_v1.json").deepCopy();
+                    "data/normal_3c_catalog_v1.json").deepCopy();
             if (mutation.equals("duplicate_offer")) {
                 ArrayNode spus = (ArrayNode) catalog.path("spus");
                 String duplicateId = spus.get(0).path("skus").get(0)
@@ -214,7 +214,7 @@ class RetailRemoteProviderContractTest {
     }
 
     private ObjectNode reviews(JsonNode request, String providerId) throws IOException {
-        JsonNode local = readAsset("retail-data/normal_3c_review_aspects_v1.json");
+        JsonNode local = readAsset("data/normal_3c_review_aspects_v1.json");
         Set<String> requested = ids(request, "product_ids");
         Set<String> found = new LinkedHashSet<>();
         ArrayNode products = mapper.createArrayNode();
@@ -236,7 +236,7 @@ class RetailRemoteProviderContractTest {
     }
 
     private ObjectNode quotes(JsonNode request, String providerId) throws IOException {
-        JsonNode catalog = readAsset("retail-data/normal_3c_catalog_v1.json");
+        JsonNode catalog = readAsset("data/normal_3c_catalog_v1.json");
         Map<String, JsonNode> offers = new HashMap<>();
         for (JsonNode spu : catalog.path("spus")) {
             for (JsonNode sku : spu.path("skus")) {

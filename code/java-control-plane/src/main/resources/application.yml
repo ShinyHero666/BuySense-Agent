@@ -15,6 +15,8 @@ spring:
     enabled: true
   jackson:
     default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: true
 
 management:
   endpoints:
@@ -27,7 +29,7 @@ buysense:
   runs:
     max-concurrent: ${MOYUAN_RUN_MAX_CONCURRENT:16}
     queue-capacity: ${MOYUAN_RUN_QUEUE_CAPACITY:256}
-    max-active-per-session: ${MOYUAN_RUN_MAX_ACTIVE_PER_SESSION:3}
+    max-active-per-identity: ${MOYUAN_RUN_MAX_ACTIVE_PER_IDENTITY:3}
     max-created-per-minute: ${MOYUAN_RUN_MAX_CREATED_PER_MINUTE:30}
     lease-duration: ${MOYUAN_RUN_LEASE_DURATION:2m}
     lease-renewal-delay: ${MOYUAN_RUN_LEASE_RENEWAL_DELAY:30s}
@@ -42,9 +44,9 @@ buysense:
     api-key: ${MOYUAN_MODELPORT_KEY:dev-client-key}
     model: ${MOYUAN_MODELPORT_MODEL:qwen-default}
     connect-timeout: 1s
-    read-timeout: 4s
-    max-calls-per-run: 2
-    max-tokens-per-call: 256
+    read-timeout: 45s
+    max-calls-per-run: 6
+    max-tokens-per-call: 768
   domain:
     default-bundle:
       - phone
