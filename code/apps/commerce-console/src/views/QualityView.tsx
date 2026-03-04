@@ -26,8 +26,8 @@ export function QualityView(props: {
       <div className="quality-grid">
         <section className="quality-chart-panel"><div className="section-title"><span>Q</span><div><small>SIX LAYERS</small><h2>在线质量剖面</h2></div></div><Chart option={chart} className="quality-chart" /></section>
         <section className="runtime-panel"><div className="section-title"><span>R</span><div><small>RUNTIME</small><h2>服务健康</h2></div></div>
-          <div className="runtime-row"><span className={`signal ${props.runtime?.model.status === "up" || props.runtime?.model.status === "offline" ? "up" : "warn"}`} /><div><small>PI / MODELPORT</small><strong>{props.runtime?.model.model ?? "—"}</strong></div><b>{props.runtime?.model.latencyMs ?? 0} ms</b></div>
-          <div className="runtime-row"><span className={`signal ${props.runtime?.dataPlane.status === "up" || props.runtime?.dataPlane.status === "embedded" ? "up" : "warn"}`} /><div><small>PYTHON DATA PLANE</small><strong>{props.runtime?.dataPlane.mode ?? "—"}</strong></div><b>{props.runtime?.dataPlane.latencyMs ?? 0} ms</b></div>
+          <div className="runtime-row"><span className={`signal ${props.runtime?.model.status === "up" || props.runtime?.model.status === "offline" ? "up" : "warn"}`} /><div><small>MODEL / ROUTESMITH</small><strong>{props.runtime?.model.model ?? "—"}</strong></div><b>{props.runtime?.model.latencyMs ?? 0} ms</b></div>
+          <div className="runtime-row"><span className={`signal ${props.runtime?.dataPlane.status === "up" || props.runtime?.dataPlane.status === "embedded" ? "up" : "warn"}`} /><div><small>DECISION DATA PLANE</small><strong>{props.runtime?.dataPlane.mode ?? "—"}</strong></div><b>{props.runtime?.dataPlane.latencyMs ?? 0} ms</b></div>
           <div className="runtime-row"><span className="signal up" /><div><small>PAYMENT BOUNDARY</small><strong>disabled by design</strong></div><b>SAFE</b></div>
         </section>
         <section className="gate-panel"><div className="section-title"><span>G</span><div><small>HUMAN-AUTHORED REGRESSION</small><h2>业务用例门禁</h2></div></div>

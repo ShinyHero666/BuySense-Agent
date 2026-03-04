@@ -17,7 +17,7 @@ export function Shell(props: {
   return (
     <div className="app-shell">
       <aside className="rail">
-        <div className="brand-mark"><span>墨</span><i /></div>
+        <div className="brand-mark"><span>B</span><i /></div>
         <div className="brand-copy">
           <strong>BUYSENSE</strong>
           <small>SEARCH · ADS · RECS</small>
@@ -39,7 +39,7 @@ export function Shell(props: {
         <div className="rail-runtime">
           <span className={`signal ${props.runtime?.status === "UP" ? "up" : "warn"}`} />
           <div>
-            <strong>{props.runtime?.model.mode ?? "连接中"}</strong>
+            <strong>{props.runtime?.model.mode === "modelport" ? "RouteSmith" : (props.runtime?.model.mode ?? "连接中")}</strong>
             <small>{props.runtime?.model.model ?? "runtime probe"}</small>
           </div>
         </div>
