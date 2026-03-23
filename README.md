@@ -14,7 +14,7 @@ mvn test
 mvn spring-boot:run
 ~~~
 
-打开 `http://127.0.0.1:19090/`。接入模型时通过环境变量连接 ModelPort。完整架构、真实 DeepSeek 基准、方案取舍和面试材料见 [`code/java-control-plane/docs/PROJECT_REVIEW_CN.md`](./code/java-control-plane/docs/PROJECT_REVIEW_CN.md)。原 TypeScript/Python 版本保留为学习与行为参考。
+打开 `http://127.0.0.1:19090/`。接入模型时通过环境变量连接 ModelPort。完整架构、分层评测口径、方案取舍和面试材料见 [`code/java-control-plane/docs/PROJECT_REVIEW_CN.md`](./code/java-control-plane/docs/PROJECT_REVIEW_CN.md)。原 TypeScript/Python 版本保留为学习与行为参考。
 
 扩展新的商品领域时，按 [`Domain Pack 扩展指南`](./docs/DOMAIN_PACKS.md) 提交版本化 manifest 与目录、评测资产；可选 Shopify 接入先使用 `python3 code/scripts/shopify_readonly_canary.py --check` 验证配置，再执行只读连通性探针。探针通过只代表凭证、固定 API 版本和最小读权限可用，不代表业务 Provider 已通过验收。
 

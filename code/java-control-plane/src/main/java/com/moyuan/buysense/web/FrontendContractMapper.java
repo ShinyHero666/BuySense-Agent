@@ -47,8 +47,21 @@ public class FrontendContractMapper {
             reply = null;
         }
         String errorCode = run.getError() == null ? null : "RUN_EXECUTION_FAILED";
-        return new RunView(run.getRunId(), run.getStatus(), reply, errorCode,
-                run.getCreatedAt(), run.getUpdatedAt());
+        return new RunView(
+                run.getRunId(),
+                "anonymous:" + run.getSessionId(),
+                run.getSessionId(),
+                run.getDomainPackId(),
+                run.getWorkflowId(),
+                run.getStatus(),
+                run.getMessage(),
+                run.isConfirmationRequested(),
+                run.getProposalRunId(),
+                reply,
+                errorCode,
+                run.getCreatedAt(),
+                run.getUpdatedAt(),
+                run.isCancellationRequested());
     }
 
     public BuyerReply proposal(DecisionResult result) {
@@ -111,7 +124,9 @@ public class FrontendContractMapper {
                 requirement.sponsoredAllowed(),
                 new Requirements(
                         requirement.budget(),
-                        List.of(),
+                        requirement.preferredBrand().isBlank()
+                                ? List.of()
+                                : List.of(requirement.preferredBrand()),
                         requirement.requiredCategories().stream().sorted().toList(),
                         requirement.useCases(),
                         constraints));
@@ -217,7 +232,8 @@ public class FrontendContractMapper {
 
     private ProductView product(Product product) {
         return new ProductView(product.id(), product.id(), product.name(), product.category(),
-                product.brand(), product.price(), 99, product.tags());
+                product.brand(), product.price(), product.stock(), product.tags(),
+                product.source(), product.sourceVersion(), product.providerId());
     }
 
     private boolean hasText(String value) {
@@ -226,14 +242,21 @@ public class FrontendContractMapper {
 
     public record RunView(
             String runId,
+            String identityId,
+            String sessionId,
+            String domainPackId,
+            String workflowId,
             String status,
+            String message,
+            boolean confirmed,
+            String proposalRunId,
             BuyerReply result,
             String errorCode,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            boolean cancelRequested
     ) {
     }
-
     public record BuyerReply(String phase, String message, Decision decision, CartDraft cartDraft) {
     }
 
@@ -302,10 +325,12 @@ public class FrontendContractMapper {
             String brand,
             BigDecimal price,
             int stock,
-            List<String> tags
+            List<String> tags,
+            String source,
+            String sourceVersion,
+            String providerId
     ) {
     }
-
     public record BundleView(
             List<CandidateView> items,
             BigDecimal totalPrice,

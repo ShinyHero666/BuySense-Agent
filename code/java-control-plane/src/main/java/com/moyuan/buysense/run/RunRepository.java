@@ -18,8 +18,7 @@ import java.util.Optional;
 
 @Repository
 public class RunRepository {
-    private static final TypeReference<Map<String, Object>> EVENT_PAYLOAD = new TypeReference<>() {
-    };
+    private static final TypeReference<Map<String, Object>> EVENT_PAYLOAD = new TypeReference<>() { };
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
@@ -34,9 +33,9 @@ public class RunRepository {
         jdbc.update("""
                         insert into agent_runs (
                             run_id, session_id, message, status, result_json, error_message,
-                            confirmation_requested, result_phase, cart_draft_json,
-                            cancellation_requested, created_at, updated_at
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            confirmation_requested, domain_pack_id, workflow_id, proposal_run_id,
+                            result_phase, cart_draft_json, cancellation_requested, created_at, updated_at
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                 run.getRunId(),
                 run.getSessionId(),
@@ -45,6 +44,9 @@ public class RunRepository {
                 writeNullable(run.getResult()),
                 run.getError(),
                 run.isConfirmationRequested(),
+                run.getDomainPackId(),
+                run.getWorkflowId(),
+                run.getProposalRunId(),
                 run.getPhase(),
                 writeNullable(run.getCartDraft()),
                 run.isCancellationRequested(),
@@ -72,25 +74,23 @@ public class RunRepository {
 
     @Transactional
     public void update(AgentRun run) {
-        jdbc.update("""
-                        update agent_runs
-                        set status = ?, result_json = ?, error_message = ?,
-                            result_phase = ?, cart_draft_json = ?,
-                            cancellation_requested = ?, updated_at = ?
-                        where run_id = ?
-                        """,
-                run.getStatus(),
-                writeNullable(run.getResult()),
-                run.getError(),
-                run.getPhase(),
-                writeNullable(run.getCartDraft()),
-                run.isCancellationRequested(),
-                Timestamp.from(run.getUpdatedAt()),
-                run.getRunId());
+        updateColumns(run);
     }
 
     @Transactional
     public void appendEvent(String runId, RunEvent event, Instant runUpdatedAt) {
+        insertEvent(runId, event);
+        jdbc.update("update agent_runs set updated_at = ? where run_id = ?",
+                Timestamp.from(runUpdatedAt), runId);
+    }
+
+    @Transactional
+    public void updateWithEvent(AgentRun run, RunEvent event) {
+        insertEvent(run.getRunId(), event);
+        updateColumns(run);
+    }
+
+    private void insertEvent(String runId, RunEvent event) {
         jdbc.update("""
                         insert into run_events (
                             event_id, run_id, sequence_no, event_type, event_time, payload_json
@@ -102,23 +102,9 @@ public class RunRepository {
                 event.eventType(),
                 Timestamp.from(event.timestamp()),
                 write(event.payload()));
-        jdbc.update("update agent_runs set updated_at = ? where run_id = ?",
-                Timestamp.from(runUpdatedAt), runId);
     }
 
-    @Transactional
-    public void updateWithEvent(AgentRun run, RunEvent event) {
-        jdbc.update("""
-                        insert into run_events (
-                            event_id, run_id, sequence_no, event_type, event_time, payload_json
-                        ) values (?, ?, ?, ?, ?, ?)
-                        """,
-                event.eventId(),
-                run.getRunId(),
-                event.sequence(),
-                event.eventType(),
-                Timestamp.from(event.timestamp()),
-                write(event.payload()));
+    private void updateColumns(AgentRun run) {
         jdbc.update("""
                         update agent_runs
                         set status = ?, result_json = ?, error_message = ?,
@@ -137,27 +123,27 @@ public class RunRepository {
     }
 
     public List<AgentRun> findAll() {
-        return jdbc.query("""
-                        select run_id, session_id, message, confirmation_requested,
-                               status, result_json, error_message, result_phase, cart_draft_json,
-                               cancellation_requested, created_at, updated_at
-                        from agent_runs
-                        order by created_at
-                        """,
-                (rs, rowNum) -> row(rs)).stream().map(this::restore).toList();
+        return jdbc.query(selectRuns(""), (rs, rowNum) -> row(rs)).stream()
+                .map(this::restore)
+                .toList();
     }
 
     public Optional<AgentRun> findById(String runId) {
-        List<RunRow> matches = jdbc.query("""
-                        select run_id, session_id, message, confirmation_requested,
-                               status, result_json, error_message, result_phase, cart_draft_json,
-                               cancellation_requested, created_at, updated_at
-                        from agent_runs
-                        where run_id = ?
-                        """,
+        List<RunRow> matches = jdbc.query(
+                selectRuns("where run_id = ?"),
                 (rs, rowNum) -> row(rs),
                 runId);
         return matches.stream().findFirst().map(this::restore);
+    }
+
+    private static String selectRuns(String suffix) {
+        return """
+                select run_id, session_id, message, confirmation_requested,
+                       domain_pack_id, workflow_id, proposal_run_id,
+                       status, result_json, error_message, result_phase, cart_draft_json,
+                       cancellation_requested, created_at, updated_at
+                from agent_runs
+                """ + suffix + " order by created_at";
     }
 
     private AgentRun restore(RunRow row) {
@@ -185,6 +171,9 @@ public class RunRepository {
                 row.sessionId(),
                 row.message(),
                 row.confirmationRequested(),
+                row.domainPackId(),
+                row.workflowId(),
+                row.proposalRunId(),
                 row.status(),
                 row.createdAt(),
                 row.updatedAt(),
@@ -202,6 +191,9 @@ public class RunRepository {
                 rs.getString("session_id"),
                 rs.getString("message"),
                 rs.getBoolean("confirmation_requested"),
+                rs.getString("domain_pack_id"),
+                rs.getString("workflow_id"),
+                rs.getString("proposal_run_id"),
                 rs.getString("status"),
                 rs.getString("result_json"),
                 rs.getString("error_message"),
@@ -249,6 +241,9 @@ public class RunRepository {
             String sessionId,
             String message,
             boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId,
             String status,
             String resultJson,
             String error,

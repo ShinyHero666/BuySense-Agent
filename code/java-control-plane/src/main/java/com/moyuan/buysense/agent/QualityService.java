@@ -2,9 +2,10 @@ package com.moyuan.buysense.agent;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.moyuan.buysense.catalog.CatalogRepository;
 import com.moyuan.buysense.domain.Candidate;
 import com.moyuan.buysense.domain.DecisionResult;
+import com.moyuan.buysense.platform.DomainPackRegistry;
+import com.moyuan.buysense.retail.RetailDataGateway;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
@@ -25,11 +26,17 @@ public class QualityService {
             IntentParser parser,
             ExecutionRouter router,
             DecisionEngine engine,
-            CatalogRepository catalog,
+            RetailDataGateway retail,
             ObjectMapper mapper
     ) {
         this.cases = loadCases(mapper);
-        this.report = evaluate(parser, router, engine, catalog.findAll().size(), cases);
+        this.report = evaluate(
+                parser,
+                router,
+                engine,
+                retail.localCatalogVersion(DomainPackRegistry.DEFAULT_PACK_ID),
+                retail.localSpuCount(DomainPackRegistry.DEFAULT_PACK_ID),
+                cases);
     }
 
     public Report report() {
@@ -44,7 +51,8 @@ public class QualityService {
             IntentParser parser,
             ExecutionRouter router,
             DecisionEngine engine,
-            int catalogSize,
+            String catalogVersion,
+            int spuCount,
             List<EvaluationCase> evaluationCases
     ) {
         List<Long> latencies = new ArrayList<>();
@@ -152,9 +160,9 @@ public class QualityService {
                 "human_authored_business_cases",
                 "40 manually specified scenarios; no labels derived from catalog attributes",
                 Instant.now(),
-                "three-c-catalog-v2-" + catalogSize,
+                catalogVersion,
                 evaluationCases.size(),
-                catalogSize,
+                spuCount,
                 metrics,
                 passed);
     }

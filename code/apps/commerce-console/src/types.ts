@@ -156,7 +156,7 @@ function isDecision(value: unknown): value is Decision {
 
 export function isBuyerReply(value: unknown): value is BuyerReply {
   const reply = record(value);
-  if (!reply || !["proposal", "cart_draft", "needs_replan", "no_pending_decision"]
+  if (!reply || !["proposal", "cart_draft", "clarification", "needs_replan", "no_pending_decision"]
     .includes(typeof reply.phase === "string" ? reply.phase : "")) return false;
   if (typeof reply.message !== "string" ||
       !(reply.decision === null || isDecision(reply.decision))) return false;

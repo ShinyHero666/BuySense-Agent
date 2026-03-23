@@ -38,3 +38,12 @@ buysense:
       - phone
       - headphones
       - charger
+  retail-provider:
+    enabled: ${MOYUAN_RETAIL_PROVIDER_ENABLED:false}
+    base-url: ${MOYUAN_RETAIL_PROVIDER_URL:}
+    api-key: ${MOYUAN_RETAIL_PROVIDER_KEY:}
+    fallback-enabled: ${MOYUAN_RETAIL_FALLBACK_ENABLED:true}
+    allow-insecure-http: ${MOYUAN_RETAIL_ALLOW_INSECURE_HTTP:false}
+    connect-timeout: 1s
+    read-timeout: 2s
+    max-response-bytes: 1048576

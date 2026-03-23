@@ -1,0 +1,54 @@
+{
+  "review_snapshot_version": "outdoor-camping-review-aspects-v1",
+  "generated_at": "2026-08-01T00:00:00Z",
+  "products": [
+    {
+      "product_id": "spu-trailforge-alpine-stove",
+      "sample_size": 486,
+      "aspects": [
+        {"aspect": "防风", "sentiment": 0.9, "mention_count": 218, "confidence": 0.95, "summary": "多数合成样本认可挡风结构在高海拔场景下的稳定性。"},
+        {"aspect": "轻量", "sentiment": 0.84, "mention_count": 164, "confidence": 0.92, "summary": "收纳体积和背负重量获得较集中正向反馈。"}
+      ]
+    },
+    {
+      "product_id": "spu-easyflame-cassette-stove",
+      "sample_size": 532,
+      "aspects": [
+        {"aspect": "稳定", "sentiment": 0.86, "mention_count": 242, "confidence": 0.94, "summary": "宽锅架在营地桌面使用时表现稳定。"},
+        {"aspect": "便携", "sentiment": 0.68, "mention_count": 181, "confidence": 0.88, "summary": "适合自驾携带，但不属于徒步轻量方案。"}
+      ]
+    },
+    {
+      "product_id": "spu-trailforge-four-season-gas",
+      "sample_size": 376,
+      "aspects": [
+        {"aspect": "低温", "sentiment": 0.88, "mention_count": 169, "confidence": 0.93, "summary": "合成样本显示四季配方在低温环境下输出较稳定。"},
+        {"aspect": "密封", "sentiment": 0.91, "mention_count": 143, "confidence": 0.95, "summary": "螺纹阀门的密封反馈保持稳定正向。"}
+      ]
+    },
+    {
+      "product_id": "spu-easyflame-butane-cassette",
+      "sample_size": 428,
+      "aspects": [
+        {"aspect": "易用", "sentiment": 0.89, "mention_count": 214, "confidence": 0.94, "summary": "卡口安装步骤简单，适合常规营地烹饪。"},
+        {"aspect": "低温", "sentiment": 0.22, "mention_count": 126, "confidence": 0.86, "summary": "低温环境下的输出反馈分化，不建议作为高海拔首选。"}
+      ]
+    },
+    {
+      "product_id": "spu-ridgecook-titanium-pot",
+      "sample_size": 294,
+      "aspects": [
+        {"aspect": "轻量", "sentiment": 0.93, "mention_count": 172, "confidence": 0.96, "summary": "轻量是徒步用户最集中的正向评价。"},
+        {"aspect": "易清洁", "sentiment": 0.66, "mention_count": 88, "confidence": 0.85, "summary": "清洁便利性整体正向，但薄壁导热需要控制火力。"}
+      ]
+    },
+    {
+      "product_id": "spu-campnova-family-cookset",
+      "sample_size": 347,
+      "aspects": [
+        {"aspect": "双人", "sentiment": 0.9, "mention_count": 183, "confidence": 0.94, "summary": "容量和配件组合适合双人营地餐。"},
+        {"aspect": "稳定", "sentiment": 0.82, "mention_count": 121, "confidence": 0.91, "summary": "宽底结构在匹配的大锅架上表现稳定。"}
+      ]
+    }
+  ]
+}

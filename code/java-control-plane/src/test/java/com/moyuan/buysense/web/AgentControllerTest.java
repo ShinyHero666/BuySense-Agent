@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.moyuan.buysense.run.RunEvent;
 import com.moyuan.buysense.run.RunService;
 import jakarta.servlet.http.Cookie;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -50,7 +51,7 @@ class AgentControllerTest {
         assertThat(firstJson.path("runId").asText()).isNotBlank();
         assertThat(cookie).isNotNull();
         assertThat(replayJson.path("runId").asText()).isEqualTo(firstJson.path("runId").asText());
-        assertThat(replayJson.path("replayed").asBoolean()).isTrue();
+        assertThat(replayJson.path("idempotentReplay").asBoolean()).isTrue();
         awaitTerminalRun(firstJson.path("runId").asText(), cookie);
     }
 
@@ -113,11 +114,16 @@ class AgentControllerTest {
 
         assertThat(runs.require(runId).getEvents().stream().map(RunEvent::eventType).toList())
                 .contains("run_created", "run_started", "task", "artifact", "policy_gate", "result");
+        assertThat(runs.require(runId).getEvents())
+                .allMatch(event -> event.schemaVersion().equals("2.0"));
         int persistedEventCount = runs.require(runId).getEvents().size();
+        var proposalTotal = completed.at("/result/decision/bundle/totalPrice").decimalValue();
 
-        String cartCreationBody = """
-                {"message":"确认生成购物车草案","confirmed":true}
-                """;
+        String cartCreationBody = objectMapper.writeValueAsString(Map.of(
+                "message", "确认生成购物车草案",
+                "confirmed", true,
+                "domainPackId", "normal-3c-v1",
+                "proposalRunId", runId));
         JsonNode cartCreation = objectMapper.readTree(mvc.perform(post("/api/v2/runs")
                         .cookie(cookie)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -130,7 +136,7 @@ class AgentControllerTest {
         assertThat(cartRun.at("/result/phase").asText()).isEqualTo("cart_draft");
         assertThat(cartRun.at("/result/cartDraft/draftId").asText()).isNotBlank();
         assertThat(cartRun.at("/result/cartDraft/totalPrice").decimalValue())
-                .isEqualByComparingTo("6957");
+                .isEqualByComparingTo(proposalTotal);
         assertThat(cartRun.at("/result/cartDraft/paymentAuthorized").asBoolean()).isFalse();
         assertThat(runs.require(cartRunId).getEvents().stream()
                 .map(RunEvent::eventType).toList())
@@ -161,7 +167,7 @@ class AgentControllerTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString());
         assertThat(replay.path("runId").asText()).isEqualTo(runId);
-        assertThat(replay.path("replayed").asBoolean()).isTrue();
+        assertThat(replay.path("idempotentReplay").asBoolean()).isTrue();
         JsonNode preference = getJson("/api/v2/preferences", cookie);
         assertThat(preference.path("personalizationEnabled").asBoolean()).isFalse();
         assertThat(preference.path("preferredBrand").asText()).isEqualTo("Apple");

@@ -1,13 +1,15 @@
 package com.moyuan.buysense.agent;
 
-import com.moyuan.buysense.catalog.CatalogRepository;
 import com.moyuan.buysense.domain.Candidate;
 import com.moyuan.buysense.domain.DecisionResult;
 import com.moyuan.buysense.domain.DecisionResult.BundleProposal;
 import com.moyuan.buysense.domain.DecisionResult.TraceStep;
 import com.moyuan.buysense.domain.Product;
 import com.moyuan.buysense.domain.Requirement;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.moyuan.buysense.platform.CommerceDomainPack;
+import com.moyuan.buysense.platform.DomainPackRegistry;
+import com.moyuan.buysense.retail.RetailDataGateway;
+import com.moyuan.buysense.retail.RetailDataSnapshot;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -30,67 +32,84 @@ public class DecisionEngine {
     private static final Map<String, Double> CHANNEL_WEIGHTS = Map.of(
             "search", 1.0,
             "recommendation", 0.9,
-            "ads", 0.35
-    );
+            "ads", 0.35);
 
-    private final CatalogRepository catalog;
-    private final CommerceDomainPolicy domainPolicy;
+    private final RetailDataGateway retail;
+    private final DomainPackRegistry domains;
 
-    public DecisionEngine(CatalogRepository catalog) {
-        this(catalog, new ThreeCDomainPolicy());
-    }
-
-    @Autowired
-    public DecisionEngine(CatalogRepository catalog, CommerceDomainPolicy domainPolicy) {
-        this.catalog = catalog;
-        this.domainPolicy = domainPolicy;
+    public DecisionEngine(RetailDataGateway retail, DomainPackRegistry domains) {
+        this.retail = retail;
+        this.domains = domains;
     }
 
     public DecisionResult decide(Requirement requirement) {
+        return decide(requirement, DomainPackRegistry.DEFAULT_PACK_ID);
+    }
+
+    public DecisionResult decide(Requirement requirement, String domainPackId) {
         long started = System.nanoTime();
-        List<Product> eligible = catalog.findAll().stream()
+        CommerceDomainPack domain = domains.require(domainPackId);
+        RetailDataSnapshot snapshot = retail.load(domain.packId());
+        List<Product> eligible = snapshot.products().stream()
+                .filter(snapshot::inStock)
                 .filter(product -> requirement.requiredCategories().isEmpty()
                         || requirement.requiredCategories().contains(product.category()))
-                .filter(product -> requirement.sponsoredAllowed() || !product.sponsored())
                 .filter(product -> requirement.budget() == null
                         || product.price().compareTo(requirement.budget()) <= 0)
                 .toList();
 
-        List<ScoredProduct> search = rank(eligible, product -> lexicalScore(product, requirement), false);
-        List<ScoredProduct> recommendation = rank(eligible, product -> recommendationScore(product, requirement), false);
+        List<ScoredProduct> search = rank(
+                eligible, product -> lexicalScore(product, requirement), false);
+        List<ScoredProduct> recommendation = rank(
+                eligible, product -> recommendationScore(product, requirement, snapshot), false);
         List<ScoredProduct> ads = requirement.sponsoredAllowed()
                 ? rank(eligible.stream()
                                 .filter(Product::sponsored)
                                 .filter(product -> product.qualityScore() >= 0.78)
                                 .toList(),
-                        product -> adScore(product, requirement), true)
+                        product -> adScore(product, requirement, snapshot), true)
                 : List.of();
 
         List<Candidate> slate = fuse(search, recommendation, ads);
         List<BundleProposal> bundles = requirement.bundleRequested()
-                ? optimizeBundles(requirement, slate)
+                ? optimizeBundles(requirement, slate, snapshot, domain)
                 : List.of();
         long elapsedMs = (System.nanoTime() - started) / 1_000_000;
 
         List<TraceStep> trace = List.of(
-                new TraceStep("intent", "constraints_extracted", Map.of(
+                new TraceStep("intent", "domain_constraints_extracted", Map.of(
+                        "domainPackId", domain.packId(),
                         "hardCategories", requirement.requiredCategories(),
                         "constraintCount", requirement.constraints().size())),
                 new TraceStep("retrieval", "parallel_channels_completed", Map.of(
-                        "search", search.size(), "recommendation", recommendation.size(), "ads", ads.size())),
+                        "search", search.size(),
+                        "recommendation", recommendation.size(),
+                        "ads", ads.size(),
+                        "catalogSource", snapshot.sources().get("catalog"))),
+                new TraceStep("evidence", "pricing_reviews_and_compatibility_joined", Map.of(
+                        "catalogVersion", snapshot.catalogVersion(),
+                        "reviewVersion", snapshot.reviewVersion(),
+                        "compatibilityVersion", snapshot.compatibilityVersion(),
+                        "pricingSource", snapshot.sources().get("pricing"))),
                 new TraceStep("fusion", "weighted_rrf_with_ad_guardrail", Map.of(
                         "rrfK", RRF_K, "top3SponsoredLimit", 1)),
                 new TraceStep("bundle", requirement.bundleRequested() ? "global_enumeration" : "not_requested",
-                        Map.of("proposalCount", bundles.size()))
-        );
-        return new DecisionResult(requirement, slate, bundles, trace, Map.of(
-                "eligibleProducts", eligible.size(),
-                "latencyMs", elapsedMs,
-                "searchCandidates", search.size(),
-                "recommendationCandidates", recommendation.size(),
-                "adCandidates", ads.size(),
-                "sponsoredInTop3", slate.stream().limit(3).filter(Candidate::sponsored).count()
-        ), DecisionResult.offlineRuntime());
+                        Map.of("proposalCount", bundles.size())));
+        return new DecisionResult(requirement, slate, bundles, trace, Map.ofEntries(
+                Map.entry("domainPackId", domain.packId()),
+                Map.entry("eligibleProducts", eligible.size()),
+                Map.entry("latencyMs", elapsedMs),
+                Map.entry("searchCandidates", search.size()),
+                Map.entry("recommendationCandidates", recommendation.size()),
+                Map.entry("adCandidates", ads.size()),
+                Map.entry("sponsoredInTop3", slate.stream().limit(3).filter(Candidate::sponsored).count()),
+                Map.entry("catalogVersion", snapshot.catalogVersion()),
+                Map.entry("reviewVersion", snapshot.reviewVersion()),
+                Map.entry("compatibilityVersion", snapshot.compatibilityVersion()),
+                Map.entry("catalogSource", snapshot.sources().get("catalog")),
+                Map.entry("pricingSource", snapshot.sources().get("pricing")),
+                Map.entry("reviewSource", snapshot.sources().get("reviews"))),
+                DecisionResult.offlineRuntime());
     }
 
     private List<ScoredProduct> rank(List<Product> products, ScoreFunction scoring, boolean ads) {
@@ -109,26 +128,65 @@ public class DecisionEngine {
         if (query.contains(product.name().toLowerCase(Locale.ROOT))) score += 0.8;
         if (query.contains(product.brand().toLowerCase(Locale.ROOT))) score += 0.35;
         if (requirement.requiredCategories().contains(product.category())) score += 0.35;
-        score += product.tags().stream().filter(query::contains).count() * 0.18;
-        score += requirement.useCases().stream().filter(product.tags()::contains).count() * 0.35;
+        score += product.tags().stream()
+                .filter(tag -> query.contains(tag.toLowerCase(Locale.ROOT)))
+                .count() * 0.18;
+        score += requirement.useCases().stream()
+                .filter(useCase -> matchesUseCase(product, useCase))
+                .count() * 0.35;
         return score;
     }
 
-    private double recommendationScore(Product product, Requirement requirement) {
+    private double recommendationScore(
+            Product product,
+            Requirement requirement,
+            RetailDataSnapshot snapshot
+    ) {
         double useCaseFit = requirement.useCases().isEmpty()
                 ? 0.5
-                : requirement.useCases().stream().filter(product.tags()::contains).count()
+                : requirement.useCases().stream().filter(useCase -> matchesUseCase(product, useCase)).count()
                         / (double) requirement.useCases().size();
-        double preferenceFit = requirement.preferredCategories().contains(product.category()) ? 1.0 : 0.5;
-        return product.qualityScore() * 0.45
-                + product.popularityScore() * 0.25
-                + useCaseFit * 0.2
-                + preferenceFit * 0.1;
+        double categoryPreference = requirement.preferredCategories().contains(product.category()) ? 1.0 : 0.5;
+        double brandPreference = !requirement.preferredBrand().isBlank()
+                && product.brand().equalsIgnoreCase(requirement.preferredBrand()) ? 1.0 : 0.0;
+        double reviewFit = snapshot.reviewFit(product, requirement.useCases());
+        return product.qualityScore() * 0.32
+                + product.popularityScore() * 0.18
+                + useCaseFit * 0.18
+                + categoryPreference * 0.08
+                + reviewFit * 0.14
+                + brandPreference * 0.10;
     }
 
-    private double adScore(Product product, Requirement requirement) {
-        double relevance = Math.max(lexicalScore(product, requirement), recommendationScore(product, requirement));
+    private double adScore(
+            Product product,
+            Requirement requirement,
+            RetailDataSnapshot snapshot
+    ) {
+        double relevance = Math.max(
+                lexicalScore(product, requirement),
+                recommendationScore(product, requirement, snapshot));
         return relevance * 0.7 + product.bidScore() * 0.3;
+    }
+
+    private static boolean matchesUseCase(Product product, String useCase) {
+        Map<String, List<String>> aliases = Map.ofEntries(
+                Map.entry("photography", List.of("photography", "拍照", "摄影", "人像")),
+                Map.entry("gaming", List.of("gaming", "游戏", "电竞", "高刷", "低延迟")),
+                Map.entry("office", List.of("office", "办公", "生产力")),
+                Map.entry("travel", List.of("travel", "旅行", "出差", "便携", "续航")),
+                Map.entry("commute", List.of("commute", "通勤", "降噪")),
+                Map.entry("windproof", List.of("防风")),
+                Map.entry("lightweight", List.of("轻量")),
+                Map.entry("high_altitude", List.of("高海拔")),
+                Map.entry("cold_weather", List.of("低温")),
+                Map.entry("two_person", List.of("双人")),
+                Map.entry("stable", List.of("稳定")),
+                Map.entry("easy_clean", List.of("易清洁")));
+        return aliases.getOrDefault(useCase, List.of(useCase)).stream()
+                .anyMatch(alias -> product.tags().stream().anyMatch(tag ->
+                        tag.equalsIgnoreCase(alias) || tag.toLowerCase(Locale.ROOT)
+                                .contains(alias.toLowerCase(Locale.ROOT))));
     }
 
     private List<Candidate> fuse(
@@ -160,9 +218,7 @@ public class DecisionEngine {
             }
             guarded.add(candidate);
         }
-        if (guarded.size() >= 3) {
-            guarded.addAll(deferredAds);
-        }
+        if (guarded.size() >= 3) guarded.addAll(deferredAds);
         return guarded.stream().limit(12).toList();
     }
 
@@ -170,14 +226,20 @@ public class DecisionEngine {
         AtomicInteger rank = new AtomicInteger(1);
         ranked.forEach(item -> {
             int currentRank = rank.getAndIncrement();
-            MutableCandidate candidate = combined.computeIfAbsent(item.product.id(), ignored -> new MutableCandidate(item.product));
+            MutableCandidate candidate = combined.computeIfAbsent(
+                    item.product.id(), ignored -> new MutableCandidate(item.product));
             candidate.channels.add(channel);
             candidate.channelScores.put(channel, item.score);
             candidate.score += CHANNEL_WEIGHTS.get(channel) / (RRF_K + currentRank);
         });
     }
 
-    private List<BundleProposal> optimizeBundles(Requirement requirement, List<Candidate> slate) {
+    private List<BundleProposal> optimizeBundles(
+            Requirement requirement,
+            List<Candidate> slate,
+            RetailDataSnapshot snapshot,
+            CommerceDomainPack domain
+    ) {
         List<String> categories = new ArrayList<>(requirement.requiredCategories());
         if (categories.isEmpty()) return List.of();
 
@@ -188,7 +250,7 @@ public class DecisionEngine {
         List<List<Product>> combinations = new ArrayList<>();
         enumerate(categories, byCategory, 0, new ArrayList<>(), combinations);
         return combinations.stream()
-                .map(items -> bundle(requirement, items))
+                .map(items -> bundle(requirement, items, snapshot, domain))
                 .filter(BundleProposal::budgetSatisfied)
                 .filter(BundleProposal::compatible)
                 .sorted(Comparator.comparingDouble(BundleProposal::score).reversed()
@@ -215,18 +277,36 @@ public class DecisionEngine {
         }
     }
 
-    private BundleProposal bundle(Requirement requirement, List<Product> items) {
+    private BundleProposal bundle(
+            Requirement requirement,
+            List<Product> items,
+            RetailDataSnapshot snapshot,
+            CommerceDomainPack domain
+    ) {
         BigDecimal total = items.stream().map(Product::price).reduce(BigDecimal.ZERO, BigDecimal::add);
-        boolean budgetSatisfied = requirement.budget() == null || total.compareTo(requirement.budget()) <= 0;
-        boolean compatible = domainPolicy.compatible(items);
-        double score = items.stream().mapToDouble(product -> product.qualityScore() + product.popularityScore()).average().orElse(0);
+        boolean budgetSatisfied = requirement.budget() == null
+                || total.compareTo(requirement.budget()) <= 0;
+        boolean compatible = snapshot.compatible(items, domain.primaryCategory());
+        double score = items.stream()
+                .mapToDouble(product -> product.qualityScore() + product.popularityScore())
+                .average().orElse(0);
         if (requirement.budget() != null && requirement.budget().signum() > 0) {
             BigDecimal utilization = total.divide(requirement.budget(), 4, RoundingMode.HALF_UP);
             score += Math.min(1.0, utilization.doubleValue()) * 0.15;
         }
         String id = items.stream().map(Product::id).collect(Collectors.joining("+"));
-        return new BundleProposal(id, items, total, score, budgetSatisfied, compatible,
-                domainPolicy.evidenceSources());
+        return new BundleProposal(
+                id,
+                items,
+                total,
+                score,
+                budgetSatisfied,
+                compatible,
+                List.of(
+                        snapshot.catalogVersion(),
+                        snapshot.reviewVersion(),
+                        snapshot.compatibilityVersion(),
+                        snapshot.sources().get("pricing")));
     }
 
     private interface ScoreFunction {
@@ -248,8 +328,14 @@ public class DecisionEngine {
 
         private Candidate freeze() {
             List<String> reasons = channels.stream().map(channel -> "recalled_by_" + channel).toList();
-            return new Candidate(product, score, product.sponsored(), List.copyOf(channels),
-                    Map.copyOf(channelScores), reasons);
+            boolean sponsoredPlacement = channels.size() == 1 && channels.contains("ads");
+            return new Candidate(
+                    product,
+                    score,
+                    sponsoredPlacement,
+                    List.copyOf(channels),
+                    Map.copyOf(channelScores),
+                    reasons);
         }
     }
 }

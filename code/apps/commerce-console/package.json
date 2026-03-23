@@ -10,7 +10,7 @@
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "tsc -b && vite build",
     "check": "tsc -b --pretty false",
-    "test:e2e": "bash ../../scripts/test-frontend-e2e.sh"
+    "test:e2e": "node ../../scripts/test-frontend-e2e.mjs"
   },
   "dependencies": {
     "echarts": "^6.0.0",

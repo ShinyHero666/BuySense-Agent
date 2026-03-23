@@ -22,7 +22,7 @@ public class ExecutionRouter {
         if (requirement.requiredCategories().isEmpty()) {
             reasons.add("missing_product_category");
             clarification = true;
-            clarificationQuestion = "你主要想购买哪类数码产品，使用场景和预算分别是什么？";
+            clarificationQuestion = "你主要想购买哪类产品，使用场景和预算分别是什么？";
         }
         if (requirement.bundleRequested() && requirement.budget() == null) {
             reasons.add("bundle_without_budget");

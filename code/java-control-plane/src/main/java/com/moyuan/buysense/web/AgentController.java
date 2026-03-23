@@ -1,7 +1,9 @@
 package com.moyuan.buysense.web;
 
-import com.moyuan.buysense.agent.QualityService;
 import com.moyuan.buysense.agent.ModelPortAgentBridge;
+import com.moyuan.buysense.agent.QualityService;
+import com.moyuan.buysense.platform.DomainPackRegistry;
+import com.moyuan.buysense.retail.RetailDataGateway;
 import com.moyuan.buysense.run.PreferenceStore;
 import com.moyuan.buysense.run.RunService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -33,6 +36,8 @@ public class AgentController {
     private final QualityService qualityService;
     private final PreferenceStore preferences;
     private final ModelPortAgentBridge modelPort;
+    private final DomainPackRegistry domains;
+    private final RetailDataGateway retail;
 
     public AgentController(
             RunService runs,
@@ -40,7 +45,9 @@ public class AgentController {
             FrontendContractMapper contractMapper,
             QualityService qualityService,
             PreferenceStore preferences,
-            ModelPortAgentBridge modelPort
+            ModelPortAgentBridge modelPort,
+            DomainPackRegistry domains,
+            RetailDataGateway retail
     ) {
         this.runs = runs;
         this.identity = identity;
@@ -48,6 +55,8 @@ public class AgentController {
         this.qualityService = qualityService;
         this.preferences = preferences;
         this.modelPort = modelPort;
+        this.domains = domains;
+        this.retail = retail;
     }
 
     @GetMapping({"/health", "/health/live", "/health/ready"})
@@ -62,15 +71,27 @@ public class AgentController {
                         "latencyMs", modelStatus.latencyMs()),
                 "dataPlane", Map.of(
                         "mode", "embedded-java",
-                        "status", "embedded",
-                        "latencyMs", 0),
-                "agentFramework", "Spring Boot agent orchestration",
+                        "status", retail.health().values().stream()
+                                .anyMatch(source -> "degraded".equals(source.get("status")))
+                                ? "degraded" : "embedded",
+                        "latencyMs", 0,
+                        "retailSources", retail.health()),
+                "agentFramework", "Spring Boot adaptive bounded-agent orchestration",
                 "paymentEnabled", false);
+    }
+
+    @GetMapping("/api/v2/domain-packs")
+    public DomainPackRegistry.RegistryView domainPacks() {
+        return domains.view();
     }
 
     @GetMapping("/api/v2/session")
     public Map<String, Object> session(HttpServletRequest request, HttpServletResponse response) {
-        return Map.of("sessionId", identity.resolve(request, response), "authenticated", false);
+        String sessionId = identity.resolve(request, response);
+        return Map.of(
+                "identityId", "anonymous:" + sessionId,
+                "sessionId", sessionId,
+                "authenticated", false);
     }
 
     @PostMapping("/api/v2/runs")
@@ -81,21 +102,35 @@ public class AgentController {
             HttpServletResponse response
     ) {
         String sessionId = identity.resolve(request, response);
+        var domain = domains.require(body.domainPackId());
         RunService.Creation creation = runs.create(
-                sessionId, idempotencyKey, body.message(), body.confirmed());
+                sessionId,
+                idempotencyKey,
+                body.message(),
+                body.confirmed(),
+                domain.packId(),
+                domain.workflowId(),
+                body.proposalRunId());
         var run = creation.run();
-        return ResponseEntity.status(creation.replayed() ? 200 : 202).body(Map.of(
-                "runId", run.getRunId(),
-                "status", run.getStatus(),
-                "replayed", creation.replayed(),
-                "eventsUrl", "/api/v2/runs/" + run.getRunId() + "/events",
-                "runUrl", "/api/v2/runs/" + run.getRunId()
-        ));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("runId", run.getRunId());
+        payload.put("domainPackId", run.getDomainPackId());
+        payload.put("workflowId", run.getWorkflowId());
+        payload.put("status", run.getStatus());
+        payload.put("idempotentReplay", creation.replayed());
+        payload.put("eventsUrl", "/api/v2/runs/" + run.getRunId() + "/events");
+        payload.put("runUrl", "/api/v2/runs/" + run.getRunId());
+        return ResponseEntity.status(creation.replayed() ? 200 : 202).body(Map.copyOf(payload));
     }
 
     @GetMapping("/api/v2/runs/{runId}")
-    public FrontendContractMapper.RunView run(@PathVariable String runId) {
-        return contractMapper.run(runs.require(runId));
+    public FrontendContractMapper.RunView run(
+            @PathVariable String runId,
+            HttpServletRequest request,
+            HttpServletResponse response
+    ) {
+        String sessionId = identity.resolve(request, response);
+        return contractMapper.run(runs.requireOwned(runId, sessionId));
     }
 
     @GetMapping("/metrics")
@@ -104,16 +139,28 @@ public class AgentController {
     }
 
     @GetMapping(path = "/api/v2/runs/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter events(
+    public ResponseEntity<SseEmitter> events(
             @PathVariable String runId,
-            @RequestHeader(value = "Last-Event-ID", defaultValue = "0") long lastEventId
+            @RequestHeader(value = "Last-Event-ID", defaultValue = "0") long lastEventId,
+            HttpServletRequest request,
+            HttpServletResponse response
     ) {
-        return runs.subscribe(runId, lastEventId);
+        String sessionId = identity.resolve(request, response);
+        try {
+            return ResponseEntity.ok(runs.subscribeOwned(runId, sessionId, lastEventId));
+        } catch (java.util.NoSuchElementException error) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @PostMapping("/api/v2/runs/{runId}/cancel")
-    public ResponseEntity<Void> cancel(@PathVariable String runId) {
-        runs.cancel(runId);
+    public ResponseEntity<Void> cancel(
+            @PathVariable String runId,
+            HttpServletRequest request,
+            HttpServletResponse response
+    ) {
+        String sessionId = identity.resolve(request, response);
+        runs.cancelOwned(runId, sessionId);
         return ResponseEntity.accepted().build();
     }
 
@@ -131,9 +178,12 @@ public class AgentController {
             HttpServletResponse response
     ) {
         String sessionId = identity.resolve(request, response);
+        Preferences normalized = new Preferences(
+                body.personalizationEnabled(),
+                body.preferredBrand() == null ? "" : body.preferredBrand());
         preferences.save(sessionId, new PreferenceStore.Preference(
-                body.personalizationEnabled(), body.preferredBrand()));
-        return body;
+                normalized.personalizationEnabled(), normalized.preferredBrand()));
+        return normalized;
     }
 
     @PostMapping("/api/v2/interactions")
@@ -153,8 +203,17 @@ public class AgentController {
 
     public record CreateRunRequest(
             @NotBlank @Size(max = 4_000) String message,
-            boolean confirmed
+            boolean confirmed,
+            String domainPackId,
+            String proposalRunId
     ) {
+        public CreateRunRequest {
+            domainPackId = domainPackId == null || domainPackId.isBlank()
+                    ? DomainPackRegistry.DEFAULT_PACK_ID
+                    : domainPackId;
+            proposalRunId = proposalRunId == null || proposalRunId.isBlank()
+                    ? null : proposalRunId;
+        }
     }
 
     public record Preferences(boolean personalizationEnabled, String preferredBrand) {

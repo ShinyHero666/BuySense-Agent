@@ -4,10 +4,13 @@ import com.moyuan.buysense.domain.Requirement;
 import com.moyuan.buysense.domain.Requirement.Constraint;
 import com.moyuan.buysense.domain.Requirement.ConstraintSource;
 import com.moyuan.buysense.domain.Requirement.ConstraintStrength;
+import com.moyuan.buysense.platform.CommerceDomainPack;
+import com.moyuan.buysense.platform.DomainPackRegistry;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -19,28 +22,22 @@ import java.util.regex.Pattern;
 @Component
 public class IntentParser {
     private static final Pattern BUDGET = Pattern.compile(
-            "(?:预算|不超过|控制在|价格(?:在)?|budget)\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*(万|千|元|块|k)?",
+            "(?:总预算|预算|不超过|控制在|价格(?:在)?|budget)\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)\\s*(万|千|元|块|k)?",
             Pattern.CASE_INSENSITIVE);
-    private static final Map<String, List<String>> CATEGORY_TERMS = Map.ofEntries(
-            Map.entry("phone", List.of("手机", "iphone", "安卓", "phone", "smartphone")),
-            Map.entry("headphones", List.of("耳机", "降噪", "headphone", "earbuds")),
-            Map.entry("charger", List.of("充电器", "充电头", "充电线", "charger")),
-            Map.entry("laptop", List.of("电脑", "笔记本", "laptop", "notebook")),
-            Map.entry("mouse", List.of("鼠标", "mouse")),
-            Map.entry("keyboard", List.of("键盘", "keyboard")),
-            Map.entry("tablet", List.of("平板", "tablet", "ipad")),
-            Map.entry("monitor", List.of("显示器", "屏幕", "monitor")),
-            Map.entry("camera", List.of("相机", "微单", "camera")),
-            Map.entry("smartwatch", List.of("手表", "智能表", "smartwatch"))
-    );
+    private static final Map<String, List<String>> USE_CASE_TERMS = useCaseTerms();
 
-    private final DomainProperties domain;
+    private final DomainPackRegistry domains;
 
-    public IntentParser(DomainProperties domain) {
-        this.domain = domain;
+    public IntentParser(DomainPackRegistry domains) {
+        this.domains = domains;
     }
 
     public Requirement parse(String message) {
+        return parse(message, DomainPackRegistry.DEFAULT_PACK_ID);
+    }
+
+    public Requirement parse(String message, String domainPackId) {
+        CommerceDomainPack pack = domains.require(domainPackId);
         String normalized = message.toLowerCase(Locale.ROOT).trim();
         BigDecimal budget = parseBudget(normalized);
         boolean bundleRequested = containsAny(normalized,
@@ -51,61 +48,68 @@ public class IntentParser {
         Set<String> preferred = new LinkedHashSet<>();
         List<Constraint> constraints = new ArrayList<>();
 
-        CATEGORY_TERMS.forEach((category, terms) -> {
-            if (containsAny(normalized, terms)) {
-                required.add(category);
+        for (CommerceDomainPack.CategoryDefinition category : pack.categories()) {
+            if (containsAny(normalized, category.terms())) {
+                required.add(category.id());
                 constraints.add(new Constraint(
                         "category",
                         "contains",
-                        category,
+                        category.id(),
                         ConstraintSource.USER,
                         ConstraintStrength.HARD,
                         1.0));
             }
-        });
+        }
 
         if (bundleRequested && required.size() <= 1) {
-            domain.defaultBundle().forEach(category -> {
-                required.add(category);
-                constraints.add(new Constraint(
-                        "category",
-                        "contains",
-                        category,
-                        ConstraintSource.SYSTEM,
-                        ConstraintStrength.HARD,
-                        1.0));
-            });
+            for (String category : pack.defaultBundleCategories()) {
+                if (required.add(category)) {
+                    constraints.add(new Constraint(
+                            "category",
+                            "contains",
+                            category,
+                            ConstraintSource.SYSTEM,
+                            ConstraintStrength.HARD,
+                            1.0));
+                }
+            }
         }
 
         List<String> useCases = new ArrayList<>();
-        inferUseCase(normalized, "photography", List.of("拍照", "摄影", "相机", "人像"),
-                useCases, preferred, constraints);
-        inferUseCase(normalized, "gaming", List.of("游戏", "电竞", "高刷", "低延迟"),
-                useCases, preferred, constraints);
-        inferUseCase(normalized, "office", List.of("办公", "生产力", "会议", "文档"),
-                useCases, preferred, constraints);
-        inferUseCase(normalized, "travel", List.of("出差", "旅行", "便携", "续航"),
-                useCases, preferred, constraints);
-        inferUseCase(normalized, "commute", List.of("通勤", "地铁", "降噪"),
-                useCases, preferred, constraints);
+        USE_CASE_TERMS.forEach((useCase, terms) -> {
+            if (!containsAny(normalized, terms)) return;
+            useCases.add(useCase);
+            inferPreferredCategory(pack, useCase, preferred);
+            constraints.add(new Constraint(
+                    "useCase",
+                    "matches",
+                    useCase,
+                    ConstraintSource.MODEL,
+                    ConstraintStrength.SOFT,
+                    0.9));
+        });
+
+        String queryBrand = "";
+        for (CommerceDomainPack.BrandDefinition brand : pack.brands()) {
+            if (!containsAny(normalized, brand.terms())) continue;
+            queryBrand = brand.name();
+            constraints.add(new Constraint(
+                    "brand",
+                    "prefers",
+                    brand.name(),
+                    ConstraintSource.USER,
+                    ConstraintStrength.SOFT,
+                    1.0));
+            break;
+        }
 
         if (budget != null) {
             constraints.add(new Constraint(
-                    "totalPrice",
-                    "<=",
-                    budget,
-                    ConstraintSource.USER,
-                    ConstraintStrength.HARD,
-                    1.0));
+                    "totalPrice", "<=", budget, ConstraintSource.USER, ConstraintStrength.HARD, 1.0));
         }
         if (!sponsoredAllowed) {
             constraints.add(new Constraint(
-                    "sponsored",
-                    "=",
-                    false,
-                    ConstraintSource.USER,
-                    ConstraintStrength.HARD,
-                    1.0));
+                    "sponsored", "=", false, ConstraintSource.USER, ConstraintStrength.HARD, 1.0));
         }
 
         return new Requirement(
@@ -117,17 +121,22 @@ public class IntentParser {
                 List.copyOf(useCases),
                 List.copyOf(constraints),
                 sponsoredAllowed,
-                bundleRequested);
+                bundleRequested,
+                queryBrand);
+    }
+
+    public Requirement enrich(Requirement original, String modelRewrite) {
+        return enrich(original, modelRewrite, DomainPackRegistry.DEFAULT_PACK_ID);
     }
 
     /**
-     * Adds model-provided retrieval vocabulary without allowing the model to
-     * change the user's budget, category, ad or bundle constraints.
+     * Model rewrites only add retrieval vocabulary and soft preferences. User
+     * budget, category, ad and bundle constraints remain authoritative.
      */
-    public Requirement enrich(Requirement original, String modelRewrite) {
+    public Requirement enrich(Requirement original, String modelRewrite, String domainPackId) {
         if (modelRewrite == null || modelRewrite.isBlank()) return original;
 
-        Requirement inferred = parse(modelRewrite);
+        Requirement inferred = parse(modelRewrite, domainPackId);
         LinkedHashSet<String> preferred = new LinkedHashSet<>(original.preferredCategories());
         preferred.addAll(inferred.preferredCategories());
         if (original.requiredCategories().isEmpty()) preferred.addAll(inferred.requiredCategories());
@@ -149,6 +158,9 @@ public class IntentParser {
                                 && existing.value().equals(candidate.value())))
                 .forEach(constraints::add);
 
+        String preferredBrand = original.preferredBrand().isBlank()
+                ? inferred.preferredBrand()
+                : original.preferredBrand();
         return new Requirement(
                 original.originalQuery(),
                 original.retrievalQuery() + " " + modelRewrite.trim(),
@@ -158,29 +170,24 @@ public class IntentParser {
                 List.copyOf(useCases),
                 List.copyOf(constraints),
                 original.sponsoredAllowed(),
-                original.bundleRequested());
+                original.bundleRequested(),
+                preferredBrand);
     }
 
-    private void inferUseCase(
-            String query,
+    private static void inferPreferredCategory(
+            CommerceDomainPack pack,
             String useCase,
-            List<String> terms,
-            List<String> useCases,
-            Set<String> preferred,
-            List<Constraint> constraints
+            Set<String> preferred
     ) {
-        if (!containsAny(query, terms)) return;
-        useCases.add(useCase);
-        if (useCase.equals("gaming") || useCase.equals("commute")) {
+        if ((useCase.equals("gaming") || useCase.equals("commute"))
+                && pack.categories().stream().anyMatch(category -> category.id().equals("headphones"))) {
             preferred.add("headphones");
         }
-        constraints.add(new Constraint(
-                "useCase",
-                "matches",
-                useCase,
-                ConstraintSource.MODEL,
-                ConstraintStrength.SOFT,
-                0.9));
+        if (useCase.equals("cold_weather") || useCase.equals("high_altitude")) {
+            if (pack.categories().stream().anyMatch(category -> category.id().equals("camp_stove"))) {
+                preferred.add("camp_stove");
+            }
+        }
     }
 
     private static BigDecimal parseBudget(String query) {
@@ -196,7 +203,7 @@ public class IntentParser {
     }
 
     private static boolean containsAny(String value, List<String> terms) {
-        return terms.stream().anyMatch(term -> containsTerm(value, term));
+        return terms.stream().anyMatch(term -> containsTerm(value, term.toLowerCase(Locale.ROOT)));
     }
 
     private static boolean containsTerm(String value, String term) {
@@ -208,5 +215,22 @@ public class IntentParser {
                         Pattern.CASE_INSENSITIVE)
                 .matcher(value)
                 .find();
+    }
+
+    private static Map<String, List<String>> useCaseTerms() {
+        Map<String, List<String>> terms = new LinkedHashMap<>();
+        terms.put("photography", List.of("拍照", "摄影", "相机", "人像"));
+        terms.put("gaming", List.of("游戏", "电竞", "高刷", "低延迟"));
+        terms.put("office", List.of("办公", "生产力", "会议", "文档"));
+        terms.put("travel", List.of("出差", "旅行", "便携", "续航"));
+        terms.put("commute", List.of("通勤", "地铁", "降噪"));
+        terms.put("windproof", List.of("防风"));
+        terms.put("lightweight", List.of("轻量"));
+        terms.put("high_altitude", List.of("高海拔"));
+        terms.put("cold_weather", List.of("低温"));
+        terms.put("two_person", List.of("双人"));
+        terms.put("stable", List.of("稳定"));
+        terms.put("easy_clean", List.of("易清洁"));
+        return Map.copyOf(terms);
     }
 }

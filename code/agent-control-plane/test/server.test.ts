@@ -105,7 +105,7 @@ test("HTTP service exposes proposal, confirmation, cart draft and six-layer metr
     const demo = await fetch(`${baseUrl}/demo`);
     assert.equal(demo.status, 200);
     assert.match(demo.headers.get("content-type") ?? "", /text\/html/);
-    assert.match(await demo.text(), /(?:墨圆智选 · 搜广推决策智能体|本地千问驱动的搜广推 Agent)/);
+    assert.match(await demo.text(), /(?:BuySense 智购引擎|墨圆智选 · 搜广推决策智能体|本地千问驱动的搜广推 Agent)/);
 
     const health = await fetch(`${baseUrl}/health`).then((response) => response.json());
     assert.equal(health.status, "UP");

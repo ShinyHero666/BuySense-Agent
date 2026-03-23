@@ -30,7 +30,7 @@ export function LearningGuide(props: { runtime: RuntimeStatus | null; onClose: (
           {TERMS.map(([term, explanation]) => <div key={term}><b>{term}</b><span>{explanation}</span></div>)}
         </div>
         <footer>
-          <a href="https://github.com/ShinyHero666" target="_blank" rel="noreferrer">查看项目作者 GitHub ↗</a>
+          <a href="https://github.com/ShinyHero666/BuySense-Agent/blob/main/START_HERE.md" target="_blank" rel="noreferrer">完整新生指南 ↗</a>
           <button type="button" className="primary-action" onClick={props.onClose}>开始探索</button>
         </footer>
       </section>

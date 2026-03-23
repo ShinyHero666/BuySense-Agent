@@ -77,10 +77,8 @@ class ModelPortAgentBridgeTest {
     }
 
     private com.moyuan.buysense.domain.DecisionResult decision() throws Exception {
-        IntentParser parser = new IntentParser(
-                new DomainProperties(List.of("phone", "headphones", "charger")));
-        DecisionEngine engine = new DecisionEngine(new CatalogRepository(objectMapper));
-        return engine.decide(parser.parse("预算7000元，配一套拍照设备"));
+        AgentTestFixture fixture = new AgentTestFixture();
+        return fixture.engine.decide(fixture.parser.parse("预算7000元，配一套拍照设备"));
     }
 
     private void startServer() throws IOException {

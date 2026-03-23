@@ -1,34 +1,29 @@
 # BuySense Java 17 control plane
 
-BuySense is a 3C purchase-decision system built with Spring Boot. It keeps
-deterministic search, recommendation, advertising and constraint logic while
-using bounded LLM roles only for complex requests.
+BuySense is a multi-domain purchase-decision application built with Spring Boot. Its primary business domain is 3C electronics; an outdoor-camping pack proves that the same bounded orchestration can load a second catalog, vocabulary, evidence set and compatibility graph without scattering domain rules through the core.
 
-Production requests do not run two paths in parallel. `ExecutionRouter` sends
-each request to one of these paths:
+Production requests never run two paths in parallel. `ExecutionRouter` chooses exactly one:
 
-- `WORKFLOW`: information-complete single-product requests, with no model call.
-- `HYBRID`: bundles, multiple categories, multiple soft objectives or ambiguous
-  language; a Planner and Critic can each be called once.
-- `CLARIFICATION`: required business input is missing; retrieval stops and the
-  API returns one clarification question.
+- `CLARIFICATION`: required business input is missing, so retrieval stops.
+- `WORKFLOW`: information-complete requests use deterministic services without an LLM call.
+- `HYBRID`: bundles or semantically complex requests may call one Planner and one Critic; both remain behind deterministic policy gates.
 
 ## Implemented capabilities
 
-- server-owned anonymous session identity;
-- asynchronous Run lifecycle, idempotent creation, cancellation and SSE replay;
+- two versioned Domain Packs backed by one Capability / Workflow Registry;
+- ten registered capabilities with a validated, bounded delegation graph;
+- server-owned session identity and cross-session resource hiding;
+- asynchronous Run lifecycle, request-bound idempotency, cancellation and SSE replay;
 - constraint provenance (`USER`, `MODEL`, `SYSTEM`, `CATALOG`);
-- Search, Recommendation and Ads retrieval channels;
-- weighted RRF fusion with an organic-result guardrail;
-- bounded global bundle enumeration with budget and compatibility checks;
-- Planner query enrichment that cannot overwrite user hard constraints;
-- Critic `APPROVE`, `RETRIEVE`, `CLARIFY` contract with one bounded retry;
-- deterministic policy gate that rejects unsafe or unnecessary model actions;
+- Search, Recommendation and Ads retrieval with weighted RRF and an ad guardrail;
+- bounded global bundle enumeration with budget, stock and compatibility checks;
+- Planner enrichment that cannot overwrite user hard constraints;
+- Critic `APPROVE`, `RETRIEVE`, `CLARIFY` contract with one retrieval retry;
+- Catalog, Review and Pricing HTTP Provider contracts with strict provenance;
+- bounded HTTP I/O, strict JSON parsing, exact response partition checks and explicit fallback telemetry;
 - persisted Runs, events, idempotency keys, preferences and cart drafts;
-- Flyway migrations with file H2 locally and PostgreSQL by configuration;
-- React/ECharts decision console served from the executable application;
-- 40 human-authored regression cases and an opt-in live model benchmark;
-- cart-draft confirmation with payment disabled by design.
+- exact proposal confirmation with payment disabled by design;
+- React/ECharts decision console served from the executable application.
 
 ## Run locally
 
@@ -37,15 +32,22 @@ mvn test
 mvn spring-boot:run
 ```
 
-Open `http://127.0.0.1:19090/`.
-
-Rebuild the console after frontend changes:
+Open `http://127.0.0.1:19090/`. Rebuild the console after frontend changes:
 
 ```bash
 cd ../apps/commerce-console
 npm install
 npm run build
 ```
+
+The cross-platform browser suite starts and stops its own offline stack:
+
+```bash
+cd ../apps/commerce-console
+npm run test:e2e
+```
+
+On Windows it uses Git Bash explicitly and verifies both E2E ports are free before taking ownership.
 
 ## ModelPort integration
 
@@ -57,29 +59,12 @@ $env:MOYUAN_MODELPORT_MODEL="deepseek-default"
 mvn spring-boot:run
 ```
 
-Secrets remain in environment variables. They must not be committed.
+Secrets remain in environment variables and must not be committed. The opt-in live benchmark is skipped during ordinary `mvn test` and must not be reported as verified without its generated report.
 
-## Reproduce the live comparison
+## Verification boundary
 
-The live test is skipped in ordinary `mvn test`. Run it only when a working
-ModelPort endpoint is available:
+- 40 human-authored Java business cases gate routing, task completion, clarification, hard constraints and ad policy.
+- The committed synthetic retrieval suite contains 120 queries over 1,200 generated SPUs. Its labels come from catalog attributes, so it is a deterministic regression benchmark rather than human relevance judgment.
+- Local catalogs are versioned reference snapshots. HTTP Provider tests use local contract servers; no claim is made about a real retailer, Shopify store, online conversion or payment execution.
 
-```powershell
-$env:RUN_LIVE_MODEL_BENCHMARK="true"
-mvn '-Dtest=LiveDecisionBenchmarkTest' `
-  '-Dbuysense.modelport.enabled=true' `
-  '-Dbuysense.modelport.base-url=http://127.0.0.1:38082' `
-  '-Dbuysense.modelport.api-key=dev-client-key' `
-  '-Dbuysense.modelport.model=deepseek-default' test
-```
-
-The report is written to
-`target/benchmark/live-decision-comparison.json`. See
-[`docs/PROJECT_REVIEW_CN.md`](docs/PROJECT_REVIEW_CN.md) for the architecture,
-measured result, design trade-offs and interview questions.
-
-## Data boundary
-
-The local catalog is a 13-SPU reference snapshot. Product names and attributes
-support reproducible development, but prices, inventory and ranking scores are
-not claimed as live commerce data. The project does not execute payment.
+See [`docs/PROJECT_REVIEW_CN.md`](docs/PROJECT_REVIEW_CN.md) for the measured results, design trade-offs and interview questions.

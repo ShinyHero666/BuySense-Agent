@@ -8,8 +8,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class IntentParserTest {
-    private final IntentParser parser = new IntentParser(
-            new DomainProperties(List.of("phone", "headphones", "charger")));
+    private final IntentParser parser = new AgentTestFixture().parser;
 
     @Test
     void expandsConfiguredBundleAndKeepsConstraintProvenance() {

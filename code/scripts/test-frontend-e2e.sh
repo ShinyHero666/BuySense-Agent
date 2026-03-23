@@ -10,10 +10,17 @@ DATA_PORT="${MOYUAN_E2E_DATA_PORT:-18183}"
 BASE_URL="http://127.0.0.1:$CONTROL_PORT"
 SERVER_LOG="$(mktemp "${TMPDIR:-/tmp}/moyuan-e2e-server.XXXXXX.log")"
 SERVER_PID=""
+SERVER_PROCESS_GROUP=false
 
 cleanup() {
   if [[ -n "$SERVER_PID" ]]; then
-    kill -- "-$SERVER_PID" 2>/dev/null || true
+    if [[ "$SERVER_PROCESS_GROUP" == true ]]; then
+      kill -- "-$SERVER_PID" 2>/dev/null || true
+    elif command -v taskkill.exe >/dev/null 2>&1; then
+      taskkill.exe //PID "$SERVER_PID" //T //F >/dev/null 2>&1 || true
+    else
+      kill -- "$SERVER_PID" 2>/dev/null || true
+    fi
     wait "$SERVER_PID" 2>/dev/null || true
   fi
   rm -f -- "$SERVER_LOG"
@@ -26,12 +33,22 @@ if curl --noproxy '*' -fsS --max-time 2 "$BASE_URL/health" >/dev/null 2>&1; then
 fi
 
 echo "[e2e] Starting an isolated offline stack at $BASE_URL"
-setsid env \
-  MOYUAN_CONTROL_PORT="$CONTROL_PORT" \
-  MOYUAN_DATA_PORT="$DATA_PORT" \
-  MOYUAN_AGENT_MODEL_MODE=modelport \
-  MOYUAN_MODELPORT_API_KEY=must-not-be-used-by-offline-e2e \
-  bash "$SCRIPT_DIR/run-sar-agent.sh" --offline >"$SERVER_LOG" 2>&1 &
+if command -v setsid >/dev/null 2>&1; then
+  setsid env \
+    MOYUAN_CONTROL_PORT="$CONTROL_PORT" \
+    MOYUAN_DATA_PORT="$DATA_PORT" \
+    MOYUAN_AGENT_MODEL_MODE=modelport \
+    MOYUAN_MODELPORT_API_KEY=must-not-be-used-by-offline-e2e \
+    bash "$SCRIPT_DIR/run-sar-agent.sh" --offline >"$SERVER_LOG" 2>&1 &
+  SERVER_PROCESS_GROUP=true
+else
+  env \
+    MOYUAN_CONTROL_PORT="$CONTROL_PORT" \
+    MOYUAN_DATA_PORT="$DATA_PORT" \
+    MOYUAN_AGENT_MODEL_MODE=modelport \
+    MOYUAN_MODELPORT_API_KEY=must-not-be-used-by-offline-e2e \
+    bash "$SCRIPT_DIR/run-sar-agent.sh" --offline >"$SERVER_LOG" 2>&1 &
+fi
 SERVER_PID="$!"
 
 ready=false

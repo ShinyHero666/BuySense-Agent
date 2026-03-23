@@ -1,10 +1,10 @@
-# 从这里开始：墨圆智选新生指南
+# 从这里开始：BuySense 新生指南
 
 这份指南面向第一次运行本项目的搜广推与 Agent 工程师，也可作为学生实验入口。你不需要 GPU、本地大模型、ModelPort 或 API Key，也能先跑通完整的 V2 决策工作台。
 
 ## 1. 你会看到什么
 
-墨圆智选把一次自然语言购买需求拆成六步：
+BuySense 把一次自然语言购买需求拆成六步：
 
 ```text
 理解需求
@@ -23,7 +23,7 @@ Agent 负责理解、选择、协调和解释；召回、排序、预算、广�
 
 | 项目 | 最低要求 | 用途 |
 |---|---|---|
-| 操作系统 | Linux 或 WSL2 | 项目只维护 Bash 入口 |
+| 操作系统 | Linux、macOS，或 Windows + Git Bash | 启动脚本使用 Bash；浏览器 E2E 提供跨平台 Node 入口 |
 | Python | 3.10+ | 搜索、推荐、广告与证据数据面 |
 | Node.js | 22.19+ | Pi Agent 控制面和 React 工作台 |
 | npm | 随 Node.js 安装 | 首次下载锁定依赖 |
@@ -34,8 +34,8 @@ Agent 负责理解、选择、协调和解释；召回、排序、预算、广�
 ## 3. 五分钟跑通离线 V2
 
 ```bash
-git clone https://github.com/tiammomo/moyuan-sar-agent.git
-cd moyuan-sar-agent
+git clone https://github.com/ShinyHero666/BuySense-Agent.git
+cd BuySense-Agent
 bash code/scripts/run-sar-agent.sh --offline --check
 bash code/scripts/run-sar-agent.sh --offline
 ```

@@ -9,8 +9,8 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ExecutionRouterTest {
-    private final IntentParser parser = new IntentParser(
-            new DomainProperties(List.of("phone", "headphones", "charger")));
+    private final AgentTestFixture fixture = new AgentTestFixture();
+    private final IntentParser parser = fixture.parser;
     private final ExecutionRouter router = new ExecutionRouter();
 
     @Test
@@ -54,8 +54,7 @@ class ExecutionRouterTest {
         assertThat(enriched.retrievalQuery()).contains("游戏手机", "高端耳机");
         assertThat(enriched.useCases()).contains("photography", "gaming");
 
-        var engine = new DecisionEngine(
-                new CatalogRepository(new ObjectMapper().findAndRegisterModules()));
+        var engine = fixture.engine;
         assertThat(engine.decide(enriched).slate())
                 .isNotEmpty()
                 .noneMatch(candidate -> candidate.sponsored());

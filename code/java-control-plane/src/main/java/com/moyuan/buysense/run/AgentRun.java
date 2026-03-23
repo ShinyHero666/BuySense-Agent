@@ -1,9 +1,11 @@
 package com.moyuan.buysense.run;
 
 import com.moyuan.buysense.domain.DecisionResult;
+import com.moyuan.buysense.platform.DomainPackRegistry;
+import com.moyuan.buysense.platform.ExtensionRegistry;
 
-import java.time.Instant;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -13,6 +15,9 @@ public final class AgentRun {
     private final String sessionId;
     private final String message;
     private final boolean confirmationRequested;
+    private final String domainPackId;
+    private final String workflowId;
+    private final String proposalRunId;
     private final Instant createdAt;
     private final List<RunEvent> events = new CopyOnWriteArrayList<>();
     private final AtomicBoolean cancellationRequested = new AtomicBoolean();
@@ -28,7 +33,21 @@ public final class AgentRun {
     }
 
     public AgentRun(String runId, String sessionId, String message, boolean confirmationRequested) {
-        this(runId, sessionId, message, confirmationRequested, Instant.now());
+        this(runId, sessionId, message, confirmationRequested,
+                DomainPackRegistry.DEFAULT_PACK_ID, ExtensionRegistry.DEFAULT_WORKFLOW_ID, null);
+    }
+
+    public AgentRun(
+            String runId,
+            String sessionId,
+            String message,
+            boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
+        this(runId, sessionId, message, confirmationRequested, domainPackId,
+                workflowId, proposalRunId, Instant.now());
     }
 
     private AgentRun(
@@ -36,12 +55,18 @@ public final class AgentRun {
             String sessionId,
             String message,
             boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId,
             Instant createdAt
     ) {
         this.runId = runId;
         this.sessionId = sessionId;
         this.message = message;
         this.confirmationRequested = confirmationRequested;
+        this.domainPackId = domainPackId;
+        this.workflowId = workflowId;
+        this.proposalRunId = proposalRunId;
         this.status = "queued";
         this.createdAt = createdAt;
         this.updatedAt = createdAt;
@@ -52,6 +77,9 @@ public final class AgentRun {
             String sessionId,
             String message,
             boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId,
             String status,
             Instant createdAt,
             Instant updatedAt,
@@ -62,7 +90,9 @@ public final class AgentRun {
             boolean cancellationRequested,
             List<RunEvent> events
     ) {
-        AgentRun run = new AgentRun(runId, sessionId, message, confirmationRequested, createdAt);
+        AgentRun run = new AgentRun(
+                runId, sessionId, message, confirmationRequested, domainPackId,
+                workflowId, proposalRunId, createdAt);
         run.status = status;
         run.updatedAt = updatedAt;
         run.result = result;
@@ -78,6 +108,9 @@ public final class AgentRun {
     public String getSessionId() { return sessionId; }
     public String getMessage() { return message; }
     public boolean isConfirmationRequested() { return confirmationRequested; }
+    public String getDomainPackId() { return domainPackId; }
+    public String getWorkflowId() { return workflowId; }
+    public String getProposalRunId() { return proposalRunId; }
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
@@ -99,8 +132,12 @@ public final class AgentRun {
     }
 
     public synchronized void prepareResult(DecisionResult result) {
+        prepareResult(result, "proposal");
+    }
+
+    public synchronized void prepareResult(DecisionResult result, String phase) {
         this.result = result;
-        this.phase = "proposal";
+        this.phase = phase;
         this.updatedAt = Instant.now();
     }
 

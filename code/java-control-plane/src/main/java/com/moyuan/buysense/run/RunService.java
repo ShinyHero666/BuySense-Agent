@@ -29,17 +29,20 @@ public class RunService {
     private final AdaptiveDecisionService decisionService;
     private final ModelPortAgentBridge modelPort;
     private final RunRepository repository;
+    private final PreferenceStore preferences;
     private final Executor executor;
 
     public RunService(
             AdaptiveDecisionService decisionService,
             ModelPortAgentBridge modelPort,
             RunRepository repository,
+            PreferenceStore preferences,
             @Qualifier("agentExecutor") Executor executor
     ) {
         this.decisionService = decisionService;
         this.modelPort = modelPort;
         this.repository = repository;
+        this.preferences = preferences;
         this.executor = executor;
     }
 
@@ -71,22 +74,70 @@ public class RunService {
             String message,
             boolean confirmationRequested
     ) {
-        var existing = repository.findIdempotentRun(sessionId, idempotencyKey);
-        if (existing.isPresent()) return new Creation(require(existing.get()), true);
+        return create(
+                sessionId,
+                idempotencyKey,
+                message,
+                confirmationRequested,
+                com.moyuan.buysense.platform.DomainPackRegistry.DEFAULT_PACK_ID,
+                com.moyuan.buysense.platform.ExtensionRegistry.DEFAULT_WORKFLOW_ID,
+                null);
+    }
 
+    public synchronized Creation create(
+            String sessionId,
+            String idempotencyKey,
+            String message,
+            boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
+        if (confirmationRequested && (proposalRunId == null || proposalRunId.isBlank())) {
+            throw new RunContractException("proposal_run_not_found", "confirmation requires proposalRunId");
+        }
+        var existing = repository.findIdempotentRun(sessionId, idempotencyKey);
+        if (existing.isPresent()) {
+            AgentRun replay = requireOwned(existing.get(), sessionId);
+            if (!sameCreation(replay, message, confirmationRequested, domainPackId, workflowId, proposalRunId)) {
+                throw new RunContractException("idempotency_key_reused", "idempotency key is bound to another request");
+            }
+            return new Creation(replay, true);
+        }
+
+        if (confirmationRequested) {
+            validateProposal(sessionId, domainPackId, workflowId, proposalRunId);
+        }
         AgentRun run = new AgentRun(
-                UUID.randomUUID().toString(), sessionId, message, confirmationRequested);
+                UUID.randomUUID().toString(),
+                sessionId,
+                message,
+                confirmationRequested,
+                domainPackId,
+                workflowId,
+                proposalRunId);
         try {
             repository.insert(run, idempotencyKey);
         } catch (DuplicateKeyException race) {
             var winner = repository.findIdempotentRun(sessionId, idempotencyKey);
-            if (winner.isPresent()) return new Creation(require(winner.get()), true);
+            if (winner.isPresent()) {
+                AgentRun replay = requireOwned(winner.get(), sessionId);
+                if (!sameCreation(replay, message, confirmationRequested,
+                        domainPackId, workflowId, proposalRunId)) {
+                    throw new RunContractException(
+                            "idempotency_key_reused",
+                            "idempotency key is bound to another request");
+                }
+                return new Creation(replay, true);
+            }
             throw race;
         }
         cache(run);
         emit(run, "run_created", Map.of(
                 "event", "run_created",
                 "role", "lead",
+                "domainPackId", domainPackId,
+                "workflowId", workflowId,
                 "status", "queued"));
         executor.execute(() -> execute(run));
         return new Creation(run, false);
@@ -102,6 +153,54 @@ public class RunService {
         return run;
     }
 
+    public AgentRun requireOwned(String runId, String sessionId) {
+        AgentRun run = require(runId);
+        if (!run.getSessionId().equals(sessionId)) {
+            throw new NoSuchElementException("run not found: " + runId);
+        }
+        return run;
+    }
+
+    private boolean sameCreation(
+            AgentRun run,
+            String message,
+            boolean confirmationRequested,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
+        return run.getMessage().equals(message)
+                && run.isConfirmationRequested() == confirmationRequested
+                && run.getDomainPackId().equals(domainPackId)
+                && run.getWorkflowId().equals(workflowId)
+                && java.util.Objects.equals(run.getProposalRunId(), proposalRunId);
+    }
+
+    private AgentRun validateProposal(
+            String sessionId,
+            String domainPackId,
+            String workflowId,
+            String proposalRunId
+    ) {
+        AgentRun proposal;
+        try {
+            proposal = requireOwned(proposalRunId, sessionId);
+        } catch (NoSuchElementException error) {
+            throw new RunContractException("proposal_run_not_found", "proposal run was not found");
+        }
+        if (proposal.isConfirmationRequested()
+                || !proposal.getStatus().equals("completed")
+                || proposal.getResult() == null
+                || !"proposal".equals(proposal.getPhase())
+                || !isQualified(proposal)) {
+            throw new RunContractException("proposal_run_not_confirmable", "proposal run is not confirmable");
+        }
+        if (!proposal.getDomainPackId().equals(domainPackId)
+                || !proposal.getWorkflowId().equals(workflowId)) {
+            throw new RunContractException("proposal_extension_mismatch", "proposal extension does not match");
+        }
+        return proposal;
+    }
     public synchronized void reloadFromStorage() {
         runs.clear();
         sequences.clear();
@@ -145,8 +244,15 @@ public class RunService {
                         "cancelledRuns", snapshot.stream().filter(run -> run.getStatus().equals("cancelled")).count()));
     }
 
+    public void cancelOwned(String runId, String sessionId) {
+        cancel(requireOwned(runId, sessionId));
+    }
+
     public void cancel(String runId) {
-        AgentRun run = require(runId);
+        cancel(require(runId));
+    }
+
+    private void cancel(AgentRun run) {
         if (isTerminal(run.getStatus())) return;
         run.requestCancellation();
         RunEvent event = appendInMemory(run, "run_cancelled", Map.of(
@@ -156,11 +262,19 @@ public class RunService {
         run.transition("cancelled");
         repository.updateWithEvent(run, event);
         publish(run, event);
-        completeSubscribers(runId);
+        completeSubscribers(run.getRunId());
+    }
+
+    public SseEmitter subscribeOwned(String runId, String sessionId, long afterSequence) {
+        return subscribe(requireOwned(runId, sessionId), afterSequence);
     }
 
     public SseEmitter subscribe(String runId, long afterSequence) {
-        AgentRun run = require(runId);
+        return subscribe(require(runId), afterSequence);
+    }
+
+    private SseEmitter subscribe(AgentRun run, long afterSequence) {
+        String runId = run.getRunId();
         SseEmitter emitter = new SseEmitter(95_000L);
         run.getEvents().stream()
                 .filter(event -> event.sequence() > afterSequence)
@@ -175,7 +289,6 @@ public class RunService {
         emitter.onError(error -> remove(runId, emitter));
         return emitter;
     }
-
     private void execute(AgentRun run) {
         try {
             if (run.isCancellationRequested()) return;
@@ -189,12 +302,18 @@ public class RunService {
                 executeConfirmation(run);
                 return;
             }
-            var execution = decisionService.decide(run.getRunId(), run.getMessage());
+            PreferenceStore.Preference preference = preferences.find(run.getSessionId());
+            String preferredBrand = preference.personalizationEnabled()
+                    ? preference.preferredBrand() : "";
+            var execution = decisionService.decide(
+                    run.getRunId(), run.getMessage(), run.getDomainPackId(), preferredBrand);
             var requirement = execution.result().requirement();
             emit(run, "artifact", Map.of(
                     "event", "routing_decision",
                     "role", "lead",
                     "artifactType", "execution_route",
+                    "domainPackId", run.getDomainPackId(),
+                    "workflowId", run.getWorkflowId(),
                     "mode", execution.route().mode().name().toLowerCase(),
                     "reasons", execution.route().reasons(),
                     "clarificationRecommended", execution.route().clarificationRecommended()));
@@ -265,14 +384,17 @@ public class RunService {
                     "artifactType", "decision_slate",
                     "slateSize", result.slate().size(),
                     "bundleCount", result.bundles().size()));
+            boolean approved = qualified(result);
             emit(run, "policy_gate", Map.of(
                     "event", "task_completed",
                     "role", "critic",
                     "gate", "hard_constraints_and_ad_policy",
-                    "approved", !result.slate().isEmpty()));
+                    "approved", approved,
+                    "bundleRequired", result.requirement().bundleRequested(),
+                    "feasibleBundleCount", result.bundles().size()));
             if (run.isCancellationRequested()) return;
-            run.prepareResult(result);
-            complete(run, "proposal");
+            run.prepareResult(result, approved ? "proposal" : "needs_replan");
+            complete(run, approved ? "proposal" : "needs_replan");
         } catch (Throwable throwable) {
             run.prepareFailure(throwable);
             RunEvent terminalEvent = appendInMemory(run, "run_failed", Map.of(
@@ -299,26 +421,13 @@ public class RunService {
                 "event", "task_delegated",
                 "role", "lead",
                 "to", "cart",
-                "taskId", "cart_draft"));
-        AgentRun proposal = runs.values().stream()
-                .filter(candidate -> !candidate.getRunId().equals(run.getRunId()))
-                .filter(candidate -> candidate.getSessionId().equals(run.getSessionId()))
-                .filter(candidate -> !candidate.isConfirmationRequested())
-                .filter(candidate -> candidate.getStatus().equals("completed"))
-                .filter(candidate -> candidate.getResult() != null)
-                .max(java.util.Comparator.comparing(AgentRun::getCreatedAt))
-                .orElse(null);
-        if (proposal == null) {
-            run.prepareNoPendingDecision();
-            emit(run, "policy_gate", Map.of(
-                    "event", "task_completed",
-                    "role", "cart",
-                    "gate", "pending_decision",
-                    "approved", false));
-            complete(run, "no_pending_decision");
-            return;
-        }
-
+                "taskId", "cart_draft",
+                "proposalRunId", run.getProposalRunId()));
+        AgentRun proposal = validateProposal(
+                run.getSessionId(),
+                run.getDomainPackId(),
+                run.getWorkflowId(),
+                run.getProposalRunId());
         BigDecimal totalPrice = proposal.getResult().bundles().isEmpty()
                 ? proposal.getResult().slate().get(0).product().price()
                 : proposal.getResult().bundles().get(0).totalPrice();
@@ -332,6 +441,7 @@ public class RunService {
                 "event", "artifact_published",
                 "role", "cart",
                 "artifactType", "cart_draft",
+                "proposalRunId", proposal.getRunId(),
                 "draftId", draft.draftId(),
                 "totalPrice", draft.totalPrice(),
                 "paymentAuthorized", false));
@@ -343,7 +453,6 @@ public class RunService {
                 "paymentAuthorized", false));
         complete(run, "cart_draft");
     }
-
     private void completeWithClarification(
             AgentRun run,
             AdaptiveDecisionService.Execution execution
@@ -411,11 +520,18 @@ public class RunService {
     }
 
     private boolean isQualified(AgentRun run) {
-        var result = run.getResult();
-        if (result == null || result.slate().isEmpty()) return false;
+        return run.getResult() != null && qualified(run.getResult());
+    }
+
+    private boolean qualified(com.moyuan.buysense.domain.DecisionResult result) {
+        if (result.slate().isEmpty()) return false;
         if (result.requirement().bundleRequested() && result.bundles().isEmpty()) return false;
         if (!result.requirement().sponsoredAllowed()
                 && result.slate().stream().anyMatch(com.moyuan.buysense.domain.Candidate::sponsored)) {
+            return false;
+        }
+        if (result.bundles().stream()
+                .anyMatch(bundle -> !bundle.budgetSatisfied() || !bundle.compatible())) {
             return false;
         }
         return result.slate().stream().limit(3)
@@ -458,6 +574,18 @@ public class RunService {
         sequences.put(run.getRunId(), new AtomicLong(maxSequence));
     }
 
+    public static final class RunContractException extends RuntimeException {
+        private final String code;
+
+        public RunContractException(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+
+        public String code() {
+            return code;
+        }
+    }
     public record Creation(AgentRun run, boolean replayed) {
     }
 }
