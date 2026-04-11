@@ -111,6 +111,55 @@ public final class RetailDataGateway {
         }
     }
 
+    public RevalidatedSelection revalidateSelection(
+            String domainPackId,
+            List<Product> proposedItems
+    ) {
+        if (proposedItems == null || proposedItems.isEmpty()) {
+            throw new ProviderException("proposal_selection_empty");
+        }
+        Set<String> requestedIds = proposedItems.stream()
+                .map(Product::id)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (requestedIds.size() != proposedItems.size()) {
+            throw new ProviderException("proposal_selection_duplicate");
+        }
+
+        RetailDataSnapshot current = load(domainPackId);
+        Map<String, Product> currentById = current.products().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        Product::id,
+                        product -> product,
+                        (left, right) -> {
+                            throw new ProviderException("provider_duplicate_product");
+                        },
+                        LinkedHashMap::new));
+        List<Product> refreshed = requestedIds.stream().map(productId -> {
+            Product product = currentById.get(productId);
+            if (product == null) throw new ProviderException("proposal_product_unavailable");
+            if (!current.inStock(product) || product.stock() <= 0) {
+                throw new ProviderException("proposal_product_out_of_stock");
+            }
+            if (properties.enabled() && !"remote_provider".equals(product.source())) {
+                throw new ProviderException("confirmation_requires_remote_pricing");
+            }
+            return product;
+        }).toList();
+
+        CommerceDomainPack pack = domains.require(domainPackId);
+        if (!current.compatible(refreshed, pack.primaryCategory())) {
+            throw new ProviderException("proposal_compatibility_changed");
+        }
+        BigDecimal total = refreshed.stream()
+                .map(Product::price)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new RevalidatedSelection(
+                List.copyOf(refreshed),
+                total,
+                current.catalogVersion(),
+                current.sources().get("pricingVersion"),
+                properties.enabled() ? remoteProviderId : pack.packId());
+    }
     public Map<String, Map<String, Object>> health() {
         Map<String, Map<String, Object>> result = new LinkedHashMap<>();
         states.forEach((name, state) -> result.put(name, state.snapshot()));
@@ -663,6 +712,17 @@ public final class RetailDataGateway {
     private record CompatibilityParse(String version, List<CompatibilityRule> rules) {
     }
 
+    public record RevalidatedSelection(
+            List<Product> items,
+            BigDecimal totalPrice,
+            String catalogVersion,
+            String pricingVersion,
+            String providerId
+    ) {
+        public RevalidatedSelection {
+            items = List.copyOf(items);
+        }
+    }
     public static final class ProviderException extends RuntimeException {
         private final String code;
 

@@ -66,6 +66,31 @@ class RetailRemoteProviderContractTest {
     }
 
     @Test
+    void confirmationRevalidationFetchesAFreshRemoteQuote() throws Exception {
+        List<String> requests = new CopyOnWriteArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        String providerId = providerId(baseUrl);
+        server.createContext("/", exchange -> serveRemote(
+                exchange, providerId, requests, "price_increase_on_second_quote"));
+        server.start();
+        try {
+            RetailDataGateway gateway = gateway(baseUrl, false);
+            RetailDataSnapshot proposalSnapshot = gateway.load("normal-3c-v1");
+            var proposed = proposalSnapshot.products().get(0);
+
+            RetailDataGateway.RevalidatedSelection refreshed = gateway.revalidateSelection(
+                    "normal-3c-v1", List.of(proposed));
+
+            assertThat(refreshed.items()).hasSize(1)
+                    .allSatisfy(product -> assertThat(product.source()).isEqualTo("remote_provider"));
+            assertThat(refreshed.totalPrice()).isGreaterThan(proposed.price());
+            assertThat(requests).hasSize(6);
+        } finally {
+            server.stop(0);
+        }
+    }
+    @Test
     void rejectsDuplicateJsonKeysBeforeTrustingProviderMetadata() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> sendRaw(exchange, 200,
@@ -168,6 +193,18 @@ class RetailRemoteProviderContractTest {
             if (mutation.equals("unexpected_quote")) {
                 ((ObjectNode) response.path("quotes").get(0))
                         .put("offer_id", "unexpected-offer");
+            }
+            if (mutation.equals("price_increase_on_second_quote")) {
+                long quoteCalls = requests.stream()
+                        .filter(request -> request.startsWith("POST /v1/prices/quote"))
+                        .count();
+                if (quoteCalls > 1) {
+                    response.path("quotes").forEach(value -> {
+                        ObjectNode quote = (ObjectNode) value;
+                        quote.put("amount", quote.path("amount").decimalValue().add(
+                                new java.math.BigDecimal("100")));
+                    });
+                }
             }
             send(exchange, 200, response);
             return;

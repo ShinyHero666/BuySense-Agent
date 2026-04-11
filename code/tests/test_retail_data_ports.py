@@ -185,8 +185,18 @@ class RetailDataPortHTTPTest(unittest.TestCase):
             ),
         }
 
-    def _start_discovery(self, *, fallback: bool = False):
-        with patch.dict(os.environ, self._env(fallback=fallback), clear=True):
+    def _start_discovery(
+        self, *, fallback: bool = False, bridge: bool = False
+    ):
+        values = self._env(fallback=fallback)
+        if bridge:
+            values.update(
+                {
+                    "MOYUAN_RETAIL_BRIDGE_ENABLED": "true",
+                    "MOYUAN_RETAIL_BRIDGE_KEY": "bridge-secret",
+                }
+            )
+        with patch.dict(os.environ, values, clear=True):
             server = build_server("127.0.0.1", 0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -194,15 +204,72 @@ class RetailDataPortHTTPTest(unittest.TestCase):
         return server, f"http://127.0.0.1:{server.server_address[1]}"
 
     @staticmethod
-    def _post(base_url: str, path: str, payload: dict):
+    def _post(
+        base_url: str,
+        path: str,
+        payload: dict,
+        *,
+        authorization: str | None = None,
+    ):
+        headers = {"content-type": "application/json"}
+        if authorization is not None:
+            headers["authorization"] = authorization
         request = urllib.request.Request(
             base_url + path,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"content-type": "application/json"},
+            headers=headers,
             method="POST",
         )
         return urllib.request.urlopen(request, timeout=2)
 
+    def test_authenticated_bridge_exposes_the_java_provider_contract(self) -> None:
+        _, base_url = self._start_discovery(bridge=True)
+        expected_provider_id = retail_provider_id(base_url)
+
+        with self.assertRaises(urllib.error.HTTPError) as unauthorized:
+            urllib.request.urlopen(
+                base_url + "/v1/catalog/normal-3c-v1", timeout=2
+            )
+        unauthorized.exception.close()
+        self.assertEqual(unauthorized.exception.code, 401)
+
+        catalog_request = urllib.request.Request(
+            base_url + "/v1/catalog/normal-3c-v1",
+            headers={"authorization": "Bearer bridge-secret"},
+        )
+        catalog = json.load(urllib.request.urlopen(catalog_request, timeout=2))
+        reviews = json.load(
+            self._post(
+                base_url,
+                "/v1/reviews/query",
+                {
+                    "domain_pack_id": "normal-3c-v1",
+                    "product_ids": ["spu-honor-200"],
+                },
+                authorization="Bearer bridge-secret",
+            )
+        )
+        quote = json.load(
+            self._post(
+                base_url,
+                "/v1/prices/quote",
+                {
+                    "domain_pack_id": "normal-3c-v1",
+                    "offer_ids": ["offer-honor-200-256-green-self"],
+                },
+                authorization="Bearer bridge-secret",
+            )
+        )
+
+        for payload in (catalog, reviews, quote):
+            self.assertEqual(payload["data_source"]["source"], "remote_provider")
+            self.assertEqual(
+                payload["data_source"]["provider_id"], expected_provider_id
+            )
+        self.assertEqual(
+            reviews["products"][0]["provider_id"], expected_provider_id
+        )
+        self.assertEqual(quote["quotes"][0]["status"], "active")
     def test_two_pack_catalog_boot_and_remote_review_quote_end_to_end(self) -> None:
         _, base_url = self._start_discovery()
         catalog_paths = {

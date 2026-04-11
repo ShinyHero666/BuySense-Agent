@@ -30,6 +30,34 @@ public class RunRepository {
 
     @Transactional
     public void insert(AgentRun run, String idempotencyKey) {
+        insertRows(run, idempotencyKey);
+    }
+
+    @Transactional
+    public void insertAdmitted(
+            AgentRun run,
+            String idempotencyKey,
+            RunExecutionProperties properties,
+            Instant now
+    ) {
+        jdbc.queryForObject(
+                "select lock_id from run_admission_lock where lock_id = 'global' for update",
+                String.class);
+        if (countActiveBySession(run.getSessionId()) >= properties.maxActivePerSession()) {
+            throw new AdmissionRejectedException("session_concurrency_limit", false);
+        }
+        if (countCreatedSince(run.getSessionId(), now.minusSeconds(60))
+                >= properties.maxCreatedPerMinute()) {
+            throw new AdmissionRejectedException("session_rate_limit", false);
+        }
+        long globalCapacity = (long) properties.maxConcurrent() + properties.queueCapacity();
+        if (countActiveGlobal() >= globalCapacity) {
+            throw new AdmissionRejectedException("run_queue_full", true);
+        }
+        insertRows(run, idempotencyKey);
+    }
+
+    private void insertRows(AgentRun run, String idempotencyKey) {
         jdbc.update("""
                         insert into agent_runs (
                             run_id, session_id, message, status, result_json, error_message,
@@ -59,8 +87,15 @@ public class RunRepository {
                             """,
                     run.getSessionId(), idempotencyKey, run.getRunId(), Timestamp.from(Instant.now()));
         }
+        if (run.isConfirmationRequested()) {
+            jdbc.update("""
+                            insert into proposal_confirmation_claims (
+                                proposal_run_id, confirmation_run_id, created_at
+                            ) values (?, ?, ?)
+                            """,
+                    run.getProposalRunId(), run.getRunId(), Timestamp.from(Instant.now()));
+        }
     }
-
     public Optional<String> findIdempotentRun(String sessionId, String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) return Optional.empty();
         List<String> matches = jdbc.query("""
@@ -72,9 +107,110 @@ public class RunRepository {
         return matches.stream().findFirst();
     }
 
+    public long countActiveBySession(String sessionId) {
+        Long count = jdbc.queryForObject("""
+                select count(*) from agent_runs
+                where session_id = ? and status in ('queued', 'running')
+                """, Long.class, sessionId);
+        return count == null ? 0 : count;
+    }
+
+    public long countCreatedSince(String sessionId, Instant since) {
+        Long count = jdbc.queryForObject("""
+                select count(*) from agent_runs
+                where session_id = ? and created_at >= ?
+                """, Long.class, sessionId, Timestamp.from(since));
+        return count == null ? 0 : count;
+    }
+
+    public long countActiveGlobal() {
+        Long count = jdbc.queryForObject("""
+                select count(*) from agent_runs
+                where status in ('queued', 'running')
+                """, Long.class);
+        return count == null ? 0 : count;
+    }
+
+    public Optional<String> findConfirmationByProposal(String proposalRunId) {
+        if (proposalRunId == null || proposalRunId.isBlank()) return Optional.empty();
+        List<String> matches = jdbc.query("""
+                select confirmation_run_id
+                from proposal_confirmation_claims
+                where proposal_run_id = ?
+                """, (rs, rowNum) -> rs.getString("confirmation_run_id"), proposalRunId);
+        return matches.stream().findFirst();
+    }
+    @Transactional
+    public Optional<Lease> acquireLease(
+            String runId,
+            String owner,
+            Instant now,
+            Instant expiresAt
+    ) {
+        int updated = jdbc.update("""
+                update agent_runs
+                set lease_owner = ?, lease_token = lease_token + 1,
+                    lease_expires_at = ?, status = 'running', updated_at = ?
+                where run_id = ?
+                  and status in ('queued', 'running')
+                  and (lease_expires_at is null or lease_expires_at < ?)
+                """,
+                owner,
+                Timestamp.from(expiresAt),
+                Timestamp.from(now),
+                runId,
+                Timestamp.from(now));
+        if (updated != 1) return Optional.empty();
+        List<Lease> leases = jdbc.query("""
+                select lease_owner, lease_token, lease_expires_at
+                from agent_runs where run_id = ? and lease_owner = ?
+                """,
+                (rs, rowNum) -> new Lease(
+                        rs.getString("lease_owner"),
+                        rs.getLong("lease_token"),
+                        instant(rs, "lease_expires_at")),
+                runId,
+                owner);
+        return leases.stream().findFirst();
+    }
+    public boolean renewLease(
+            String runId,
+            Lease lease,
+            Instant now,
+            Instant expiresAt
+    ) {
+        return jdbc.update("""
+                update agent_runs
+                set lease_expires_at = ?, updated_at = ?
+                where run_id = ?
+                  and lease_owner = ? and lease_token = ?
+                  and status in ('queued', 'running')
+                  and lease_expires_at >= ?
+                """,
+                Timestamp.from(expiresAt),
+                Timestamp.from(now),
+                runId,
+                lease.owner(),
+                lease.token(),
+                Timestamp.from(now)) == 1;
+    }
+
+    public List<String> findRecoverableRunIds(Instant now, int limit) {
+        return jdbc.query("""
+                select run_id from agent_runs
+                where status in ('queued', 'running')
+                  and (lease_expires_at is null or lease_expires_at < ?)
+                order by created_at
+                limit ?
+                """,
+                (rs, rowNum) -> rs.getString("run_id"),
+                Timestamp.from(now),
+                limit);
+    }
     @Transactional
     public void update(AgentRun run) {
         updateColumns(run);
+        releaseRetryableConfirmationClaim(run);
     }
 
     @Transactional
@@ -88,6 +224,61 @@ public class RunRepository {
     public void updateWithEvent(AgentRun run, RunEvent event) {
         insertEvent(run.getRunId(), event);
         updateColumns(run);
+        releaseRetryableConfirmationClaim(run);
+    }
+    @Transactional
+    public void appendEventFenced(
+            String runId,
+            RunEvent event,
+            Instant runUpdatedAt,
+            Lease lease
+    ) {
+        requireLease(runId, runUpdatedAt, lease);
+        insertEvent(runId, event);
+    }
+
+    @Transactional
+    public void updateWithEventFenced(AgentRun run, RunEvent event, Lease lease) {
+        insertEvent(run.getRunId(), event);
+        int updated = jdbc.update("""
+                        update agent_runs
+                        set status = ?, result_json = ?, error_message = ?,
+                            result_phase = ?, cart_draft_json = ?,
+                            cancellation_requested = ?, updated_at = ?
+                        where run_id = ?
+                          and lease_owner = ? and lease_token = ?
+                          and status in ('queued', 'running')
+                          and lease_expires_at >= ?
+                        """,
+                run.getStatus(),
+                writeNullable(run.getResult()),
+                run.getError(),
+                run.getPhase(),
+                writeNullable(run.getCartDraft()),
+                run.isCancellationRequested(),
+                Timestamp.from(run.getUpdatedAt()),
+                run.getRunId(),
+                lease.owner(),
+                lease.token(),
+                Timestamp.from(Instant.now()));
+        if (updated != 1) throw new LeaseLostException(run.getRunId());
+        releaseRetryableConfirmationClaim(run);
+    }
+
+    private void requireLease(String runId, Instant updatedAt, Lease lease) {
+        int updated = jdbc.update("""
+                update agent_runs set updated_at = ?
+                where run_id = ?
+                  and lease_owner = ? and lease_token = ?
+                  and status in ('queued', 'running')
+                  and lease_expires_at >= ?
+                """,
+                Timestamp.from(updatedAt),
+                runId,
+                lease.owner(),
+                lease.token(),
+                Timestamp.from(Instant.now()));
+        if (updated != 1) throw new LeaseLostException(runId);
     }
 
     private void insertEvent(String runId, RunEvent event) {
@@ -104,6 +295,15 @@ public class RunRepository {
                 write(event.payload()));
     }
 
+    private void releaseRetryableConfirmationClaim(AgentRun run) {
+        if (run.isConfirmationRequested()
+                && ("failed".equals(run.getStatus()) || "cancelled".equals(run.getStatus()))) {
+            jdbc.update("""
+                    delete from proposal_confirmation_claims
+                    where confirmation_run_id = ?
+                    """, run.getRunId());
+        }
+    }
     private void updateColumns(AgentRun run) {
         jdbc.update("""
                         update agent_runs
@@ -122,6 +322,22 @@ public class RunRepository {
                 run.getRunId());
     }
 
+    @Transactional
+    public List<String> deleteTerminalBefore(Instant cutoff) {
+        List<String> runIds = jdbc.query("""
+                select run_id from agent_runs
+                where status in ('completed', 'failed', 'cancelled')
+                  and updated_at < ?
+                """, (rs, rowNum) -> rs.getString("run_id"), Timestamp.from(cutoff));
+        if (!runIds.isEmpty()) {
+            jdbc.update("""
+                    delete from agent_runs
+                    where status in ('completed', 'failed', 'cancelled')
+                      and updated_at < ?
+                    """, Timestamp.from(cutoff));
+        }
+        return List.copyOf(runIds);
+    }
     public List<AgentRun> findAll() {
         return jdbc.query(selectRuns(""), (rs, rowNum) -> row(rs)).stream()
                 .map(this::restore)
@@ -236,6 +452,32 @@ public class RunRepository {
         }
     }
 
+    public static final class AdmissionRejectedException extends RuntimeException {
+        private final String code;
+        private final boolean overloaded;
+
+        public AdmissionRejectedException(String code, boolean overloaded) {
+            super(code);
+            this.code = code;
+            this.overloaded = overloaded;
+        }
+
+        public String code() {
+            return code;
+        }
+
+        public boolean overloaded() {
+            return overloaded;
+        }
+    }
+    public record Lease(String owner, long token, Instant expiresAt) {
+    }
+
+    public static final class LeaseLostException extends RuntimeException {
+        public LeaseLostException(String runId) {
+            super("run lease was lost: " + runId);
+        }
+    }
     private record RunRow(
             String runId,
             String sessionId,

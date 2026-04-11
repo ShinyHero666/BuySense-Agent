@@ -2,19 +2,26 @@ package com.moyuan.buysense.run;
 
 import com.moyuan.buysense.agent.AdaptiveDecisionService;
 import com.moyuan.buysense.agent.ModelPortAgentBridge;
+import com.moyuan.buysense.domain.Candidate;
+import com.moyuan.buysense.domain.DecisionResult;
+import com.moyuan.buysense.domain.Product;
+import com.moyuan.buysense.retail.RetailDataGateway;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -28,21 +35,30 @@ public class RunService {
     private final Map<String, AtomicLong> sequences = new ConcurrentHashMap<>();
     private final AdaptiveDecisionService decisionService;
     private final ModelPortAgentBridge modelPort;
+    private final RetailDataGateway retail;
     private final RunRepository repository;
     private final PreferenceStore preferences;
+    private final RunExecutionProperties executionProperties;
     private final Executor executor;
+    private final String workerId = UUID.randomUUID().toString();
+    private final Map<String, RunRepository.Lease> activeLeases = new ConcurrentHashMap<>();
+    private final Set<String> submittedRuns = ConcurrentHashMap.newKeySet();
 
     public RunService(
             AdaptiveDecisionService decisionService,
             ModelPortAgentBridge modelPort,
+            RetailDataGateway retail,
             RunRepository repository,
             PreferenceStore preferences,
+            RunExecutionProperties executionProperties,
             @Qualifier("agentExecutor") Executor executor
     ) {
         this.decisionService = decisionService;
         this.modelPort = modelPort;
+        this.retail = retail;
         this.repository = repository;
         this.preferences = preferences;
+        this.executionProperties = executionProperties;
         this.executor = executor;
     }
 
@@ -57,14 +73,7 @@ public class RunService {
                         repository.update(run);
                         return;
                     }
-                    run.transition("queued");
-                    repository.update(run);
-                    emit(run, "artifact", Map.of(
-                            "event", "artifact_published",
-                            "role", "lead",
-                            "artifactType", "run_recovered",
-                            "status", "queued"));
-                    executor.execute(() -> execute(run));
+                    submit(run, true);
                 });
     }
 
@@ -96,6 +105,7 @@ public class RunService {
         if (confirmationRequested && (proposalRunId == null || proposalRunId.isBlank())) {
             throw new RunContractException("proposal_run_not_found", "confirmation requires proposalRunId");
         }
+
         var existing = repository.findIdempotentRun(sessionId, idempotencyKey);
         if (existing.isPresent()) {
             AgentRun replay = requireOwned(existing.get(), sessionId);
@@ -107,7 +117,19 @@ public class RunService {
 
         if (confirmationRequested) {
             validateProposal(sessionId, domainPackId, workflowId, proposalRunId);
+            var existingConfirmation = repository.findConfirmationByProposal(proposalRunId);
+            if (existingConfirmation.isPresent()) {
+                AgentRun replay = requireOwned(existingConfirmation.get(), sessionId);
+                if (!replay.getDomainPackId().equals(domainPackId)
+                        || !replay.getWorkflowId().equals(workflowId)) {
+                    throw new RunContractException(
+                            "proposal_extension_mismatch",
+                            "proposal extension does not match");
+                }
+                return new Creation(replay, true);
+            }
         }
+
         AgentRun run = new AgentRun(
                 UUID.randomUUID().toString(),
                 sessionId,
@@ -117,11 +139,18 @@ public class RunService {
                 workflowId,
                 proposalRunId);
         try {
-            repository.insert(run, idempotencyKey);
+            repository.insertAdmitted(run, idempotencyKey, executionProperties, Instant.now());
+        } catch (RunRepository.AdmissionRejectedException rejected) {
+            String reason = switch (rejected.code()) {
+                case "session_concurrency_limit" -> "too many active runs for this session";
+                case "session_rate_limit" -> "too many runs created during the last minute";
+                default -> "global run queue is full";
+            };
+            throw new RunCapacityException(rejected.code(), reason, rejected.overloaded());
         } catch (DuplicateKeyException race) {
-            var winner = repository.findIdempotentRun(sessionId, idempotencyKey);
-            if (winner.isPresent()) {
-                AgentRun replay = requireOwned(winner.get(), sessionId);
+            var idempotentWinner = repository.findIdempotentRun(sessionId, idempotencyKey);
+            if (idempotentWinner.isPresent()) {
+                AgentRun replay = requireOwned(idempotentWinner.get(), sessionId);
                 if (!sameCreation(replay, message, confirmationRequested,
                         domainPackId, workflowId, proposalRunId)) {
                     throw new RunContractException(
@@ -129,6 +158,14 @@ public class RunService {
                             "idempotency key is bound to another request");
                 }
                 return new Creation(replay, true);
+            }
+            if (confirmationRequested) {
+                var confirmationWinner = repository.findConfirmationByProposal(proposalRunId);
+                if (confirmationWinner.isPresent()) {
+                    return new Creation(
+                            requireOwned(confirmationWinner.get(), sessionId),
+                            true);
+                }
             }
             throw race;
         }
@@ -139,7 +176,7 @@ public class RunService {
                 "domainPackId", domainPackId,
                 "workflowId", workflowId,
                 "status", "queued"));
-        executor.execute(() -> execute(run));
+        submit(run, false);
         return new Creation(run, false);
     }
 
@@ -195,11 +232,82 @@ public class RunService {
                 || !isQualified(proposal)) {
             throw new RunContractException("proposal_run_not_confirmable", "proposal run is not confirmable");
         }
+        if (proposal.getUpdatedAt().plus(executionProperties.proposalTtl()).isBefore(Instant.now())) {
+            throw new RunContractException("proposal_expired", "proposal confirmation window expired");
+        }
         if (!proposal.getDomainPackId().equals(domainPackId)
                 || !proposal.getWorkflowId().equals(workflowId)) {
             throw new RunContractException("proposal_extension_mismatch", "proposal extension does not match");
         }
         return proposal;
+    }
+
+    private void submit(AgentRun run, boolean recovering) {
+        if (!submittedRuns.add(run.getRunId())) return;
+        try {
+            executor.execute(() -> {
+                try {
+                    execute(run);
+                } finally {
+                    submittedRuns.remove(run.getRunId());
+                }
+            });
+        } catch (TaskRejectedException rejected) {
+            submittedRuns.remove(run.getRunId());
+            if (recovering) return;
+            run.prepareFailure(rejected);
+            RunEvent terminalEvent = appendInMemory(run, "run_failed", Map.of(
+                    "event", "run_failed",
+                    "role", "lead",
+                    "status", "failed",
+                    "error", "run queue is full"));
+            run.transition("failed");
+            repository.updateWithEvent(run, terminalEvent);
+            publish(run, terminalEvent);
+            throw new RunCapacityException("run_queue_full", "global run queue is full", true);
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${buysense.runs.lease-renewal-delay:PT30S}")
+    public void renewActiveLeases() {
+        Instant now = Instant.now();
+        activeLeases.forEach((runId, lease) -> {
+            Instant expiresAt = now.plus(executionProperties.leaseDuration());
+            if (repository.renewLease(runId, lease, now, expiresAt)) {
+                activeLeases.replace(
+                        runId,
+                        lease,
+                        new RunRepository.Lease(lease.owner(), lease.token(), expiresAt));
+            }
+        });
+    }
+
+    @Scheduled(
+            initialDelayString = "${buysense.runs.recovery-initial-delay:PT5S}",
+            fixedDelayString = "${buysense.runs.recovery-delay:PT30S}"
+    )
+    public void recoverExpiredRuns() {
+        Instant now = Instant.now();
+        int limit = executionProperties.maxConcurrent() + executionProperties.queueCapacity();
+        repository.findRecoverableRunIds(now, limit).forEach(runId ->
+                repository.findById(runId).ifPresent(run -> {
+                    if (!submittedRuns.contains(runId)
+                            && !isTerminal(run.getStatus())
+                            && !run.isCancellationRequested()) {
+                        cache(run);
+                        submit(run, true);
+                    }
+                }));
+    }
+    @Scheduled(fixedDelayString = "${buysense.runs.cleanup-delay:PT1H}")
+    public synchronized void cleanupExpiredRuns() {
+        Instant cutoff = Instant.now().minus(executionProperties.terminalRetention());
+        repository.deleteTerminalBefore(cutoff).forEach(runId -> {
+            runs.remove(runId);
+            sequences.remove(runId);
+            activeLeases.remove(runId);
+            completeSubscribers(runId);
+        });
     }
     public synchronized void reloadFromStorage() {
         runs.clear();
@@ -290,10 +398,19 @@ public class RunService {
         return emitter;
     }
     private void execute(AgentRun run) {
+        Instant leaseStarted = Instant.now();
+        RunRepository.Lease lease = repository.acquireLease(
+                        run.getRunId(),
+                        workerId,
+                        leaseStarted,
+                        leaseStarted.plus(executionProperties.leaseDuration()))
+                .orElse(null);
+        if (lease == null) return;
+        activeLeases.put(run.getRunId(), lease);
+        run.transition("running");
+
         try {
             if (run.isCancellationRequested()) return;
-            run.transition("running");
-            repository.update(run);
             emit(run, "run_started", Map.of(
                     "event", "task_started",
                     "role", "lead",
@@ -395,6 +512,8 @@ public class RunService {
             if (run.isCancellationRequested()) return;
             run.prepareResult(result, approved ? "proposal" : "needs_replan");
             complete(run, approved ? "proposal" : "needs_replan");
+        } catch (RunRepository.LeaseLostException ignored) {
+            return;
         } catch (Throwable throwable) {
             run.prepareFailure(throwable);
             RunEvent terminalEvent = appendInMemory(run, "run_failed", Map.of(
@@ -403,16 +522,26 @@ public class RunService {
                     "status", "failed",
                     "error", safeMessage(throwable)));
             run.transition("failed");
-            repository.updateWithEvent(run, terminalEvent);
-            publish(run, terminalEvent);
+            try {
+                repository.updateWithEventFenced(run, terminalEvent, lease);
+                publish(run, terminalEvent);
+            } catch (RunRepository.LeaseLostException ignored) {
+                return;
+            }
         } finally {
+            activeLeases.remove(run.getRunId(), lease);
             completeSubscribers(run.getRunId());
         }
     }
 
     private void emit(AgentRun run, String type, Map<String, Object> data) {
         RunEvent event = appendInMemory(run, type, data);
-        repository.appendEvent(run.getRunId(), event, run.getUpdatedAt());
+        RunRepository.Lease lease = activeLeases.get(run.getRunId());
+        if (lease == null) {
+            repository.appendEvent(run.getRunId(), event, run.getUpdatedAt());
+        } else {
+            repository.appendEventFenced(run.getRunId(), event, run.getUpdatedAt(), lease);
+        }
         publish(run, event);
     }
 
@@ -428,15 +557,36 @@ public class RunService {
                 run.getDomainPackId(),
                 run.getWorkflowId(),
                 run.getProposalRunId());
-        BigDecimal totalPrice = proposal.getResult().bundles().isEmpty()
-                ? proposal.getResult().slate().get(0).product().price()
-                : proposal.getResult().bundles().get(0).totalPrice();
+
+        DecisionResult proposalResult = proposal.getResult();
+        List<Product> proposedItems = proposalResult.bundles().isEmpty()
+                ? List.of(proposalResult.slate().get(0).product())
+                : proposalResult.bundles().get(0).items();
+        RetailDataGateway.RevalidatedSelection current = retail.revalidateSelection(
+                run.getDomainPackId(), proposedItems);
+        if (proposalResult.requirement().budget() != null
+                && current.totalPrice().compareTo(proposalResult.requirement().budget()) > 0) {
+            throw new RunContractException(
+                    "proposal_budget_changed",
+                    "current quote exceeds the confirmed proposal budget");
+        }
+
+        DecisionResult refreshedResult = refreshConfirmedDecision(proposalResult, current);
         AgentRun.CartDraftState draft = new AgentRun.CartDraftState(
                 UUID.randomUUID().toString(),
-                totalPrice,
-                Instant.now().plus(15, ChronoUnit.MINUTES),
+                current.totalPrice(),
+                Instant.now().plus(executionProperties.proposalTtl()),
                 false);
-        run.prepareCartDraft(proposal.getResult(), draft);
+        run.prepareCartDraft(refreshedResult, draft);
+        emit(run, "artifact", Map.of(
+                "event", "artifact_published",
+                "role", "pricing",
+                "artifactType", "confirmation_revalidation",
+                "proposalRunId", proposal.getRunId(),
+                "catalogVersion", current.catalogVersion(),
+                "pricingVersion", current.pricingVersion(),
+                "providerId", current.providerId(),
+                "totalPrice", current.totalPrice()));
         emit(run, "artifact", Map.of(
                 "event", "artifact_published",
                 "role", "cart",
@@ -452,6 +602,62 @@ public class RunService {
                 "approved", true,
                 "paymentAuthorized", false));
         complete(run, "cart_draft");
+    }
+
+    private DecisionResult refreshConfirmedDecision(
+            DecisionResult original,
+            RetailDataGateway.RevalidatedSelection current
+    ) {
+        Map<String, Product> refreshedById = new LinkedHashMap<>();
+        current.items().forEach(product -> refreshedById.put(product.id(), product));
+
+        List<Candidate> refreshedSlate = original.slate().stream()
+                .map(candidate -> {
+                    Product refreshed = refreshedById.get(candidate.product().id());
+                    if (refreshed == null) return candidate;
+                    return new Candidate(
+                            refreshed,
+                            candidate.score(),
+                            candidate.sponsored(),
+                            candidate.channels(),
+                            candidate.channelScores(),
+                            candidate.reasons());
+                })
+                .toList();
+
+        List<DecisionResult.BundleProposal> refreshedBundles = new ArrayList<>(original.bundles());
+        if (!refreshedBundles.isEmpty()) {
+            DecisionResult.BundleProposal selected = refreshedBundles.get(0);
+            List<String> evidence = new ArrayList<>(selected.evidence());
+            evidence.add(current.catalogVersion());
+            evidence.add(current.pricingVersion());
+            boolean budgetSatisfied = original.requirement().budget() == null
+                    || current.totalPrice().compareTo(original.requirement().budget()) <= 0;
+            refreshedBundles.set(0, new DecisionResult.BundleProposal(
+                    selected.id(),
+                    current.items(),
+                    current.totalPrice(),
+                    selected.score(),
+                    budgetSatisfied,
+                    true,
+                    List.copyOf(evidence)));
+        }
+
+        DecisionResult refreshed = new DecisionResult(
+                original.requirement(),
+                refreshedSlate,
+                List.copyOf(refreshedBundles),
+                original.trace(),
+                original.metrics(),
+                original.runtime());
+        return refreshed.appendTrace(new DecisionResult.TraceStep(
+                "confirmation",
+                "live_price_and_stock_revalidated",
+                Map.of(
+                        "catalogVersion", current.catalogVersion(),
+                        "pricingVersion", current.pricingVersion(),
+                        "providerId", current.providerId(),
+                        "totalPrice", current.totalPrice())));
     }
     private void completeWithClarification(
             AgentRun run,
@@ -478,7 +684,12 @@ public class RunService {
                 "phase", phase,
                 "status", "completed"));
         run.transition("completed");
-        repository.updateWithEvent(run, terminalEvent);
+        RunRepository.Lease lease = activeLeases.get(run.getRunId());
+        if (lease == null) {
+            repository.updateWithEvent(run, terminalEvent);
+        } else {
+            repository.updateWithEventFenced(run, terminalEvent, lease);
+        }
         publish(run, terminalEvent);
     }
 
@@ -574,6 +785,24 @@ public class RunService {
         sequences.put(run.getRunId(), new AtomicLong(maxSequence));
     }
 
+    public static final class RunCapacityException extends RuntimeException {
+        private final String code;
+        private final boolean overloaded;
+
+        public RunCapacityException(String code, String message, boolean overloaded) {
+            super(message);
+            this.code = code;
+            this.overloaded = overloaded;
+        }
+
+        public String code() {
+            return code;
+        }
+
+        public boolean overloaded() {
+            return overloaded;
+        }
+    }
     public static final class RunContractException extends RuntimeException {
         private final String code;
 

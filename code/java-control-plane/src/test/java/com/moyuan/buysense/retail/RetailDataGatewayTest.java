@@ -69,6 +69,23 @@ class RetailDataGatewayTest {
     }
 
     @Test
+    void confirmationFailsClosedInsteadOfUsingAFallbackSnapshotAsLivePricing() throws Exception {
+        HttpServer server = failingServer();
+        try {
+            RetailDataGateway gateway = gateway(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), true);
+            var fallback = gateway.load("normal-3c-v1");
+
+            assertThatThrownBy(() -> gateway.revalidateSelection(
+                    "normal-3c-v1", java.util.List.of(fallback.products().get(0))))
+                    .isInstanceOf(RetailDataGateway.ProviderException.class)
+                    .extracting(error -> ((RetailDataGateway.ProviderException) error).code())
+                    .isEqualTo("confirmation_requires_remote_pricing");
+        } finally {
+            server.stop(0);
+        }
+    }
+    @Test
     void rejectsPlainHttpForNonLoopbackProvidersUnlessExplicitlyEnabled() {
         assertThatThrownBy(() -> gateway("http://example.com/provider", true))
                 .isInstanceOf(IllegalArgumentException.class)

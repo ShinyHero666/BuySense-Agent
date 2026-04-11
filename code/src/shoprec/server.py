@@ -1,21 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import logging
 import os
 import signal
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .retail_decision import RetailDecisionService, create_retail_decision_service
 from .retail_data_ports import (
     RetailDataPortError,
     RetailDataPorts,
     create_retail_data_ports,
+    retail_provider_id,
 )
 from .retail_discovery import RetailDiscoveryService, create_retail_discovery_service
 from .retail_domain import DOMAIN_PACK_REGISTRY, DomainPackRegistry, RetailDomainPack
@@ -54,6 +56,8 @@ class MoyuanHTTPServer(ThreadingHTTPServer):
         retail_decision_service,
         domain_pack_registry,
         domain_runtimes,
+        retail_bridge_enabled,
+        retail_bridge_api_key,
     ) -> None:
         self.service = service
         self.buyer_agent = buyer_agent
@@ -61,6 +65,8 @@ class MoyuanHTTPServer(ThreadingHTTPServer):
         self.retail_decision_service = retail_decision_service
         self.domain_pack_registry = domain_pack_registry
         self.domain_runtimes = domain_runtimes
+        self.retail_bridge_enabled = retail_bridge_enabled
+        self.retail_bridge_api_key = retail_bridge_api_key
         super().__init__(address, handler)
 
     def domain_runtime(self, pack_id: str | None = None) -> DomainRuntime:
@@ -75,6 +81,112 @@ class MoyuanHTTPServer(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "MoyuanLab/1.0"
+
+    def _bridge_provider_id(self) -> str:
+        host = self.headers.get("Host", "").strip()
+        if not host or "/" in host or chr(92) in host:
+            raise ValidationError("Host", "must identify the retail bridge endpoint")
+        return retail_provider_id(f"http://{host}")
+
+    def _bridge_authorized(self) -> bool:
+        expected = f"Bearer {self.server.retail_bridge_api_key}"
+        actual = self.headers.get("Authorization", "")
+        if hmac.compare_digest(actual, expected):
+            return True
+        self._send(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
+        return False
+
+    def _bridge_metadata(self, metadata) -> dict:
+        source = dict(metadata.to_wire() if hasattr(metadata, "to_wire") else metadata)
+        if source.get("source") == "remote_provider":
+            source["provider_id"] = self._bridge_provider_id()
+        return source
+
+    def _bridge_response(self, payload: dict) -> dict:
+        result = dict(payload)
+        result["data_source"] = self._bridge_metadata(result.get("data_source", {}))
+        products = []
+        for raw_product in result.get("products", []):
+            product = dict(raw_product)
+            if product.get("source") == "remote_provider":
+                product["provider_id"] = self._bridge_provider_id()
+            products.append(product)
+        if "products" in result:
+            result["products"] = products
+        return result
+
+    def _handle_bridge_get(self, path: str) -> bool:
+        prefix = "/v1/catalog/"
+        if not path.startswith(prefix):
+            return False
+        if not self.server.retail_bridge_enabled:
+            self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return True
+        if not self._bridge_authorized():
+            return True
+        try:
+            pack_id = unquote(path[len(prefix) :])
+            runtime = self.server.domain_runtime(pack_id)
+            if runtime.data_ports is None:
+                raise RetailDataPortError("bridge_data_ports_unavailable")
+            catalog, metadata = runtime.data_ports.catalog_port.load()
+            payload = asdict(catalog)
+            payload["data_source"] = self._bridge_metadata(metadata)
+            self._send(HTTPStatus.OK, payload)
+        except ValidationError as error:
+            self._send(HTTPStatus.BAD_REQUEST, error.to_dict())
+        except RetailDataPortError as error:
+            self._send(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"error": "retail_data_unavailable", "code": error.code},
+            )
+        except Exception:
+            LOGGER.exception("Retail bridge catalog request failed")
+            self._send(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": "internal_server_error"},
+            )
+        return True
+
+    def _handle_bridge_post(self, path: str, payload: dict) -> bool:
+        fields_by_path = {
+            "/v1/reviews/query": "product_ids",
+            "/v1/prices/quote": "offer_ids",
+        }
+        request_field = fields_by_path.get(path)
+        if request_field is None:
+            return False
+        if not self.server.retail_bridge_enabled:
+            self._send(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return True
+        if not self._bridge_authorized():
+            return True
+        allowed = {"domain_pack_id", request_field}
+        unknown = set(payload) - allowed
+        if unknown:
+            raise ValidationError(
+                "request", "unknown fields: " + ", ".join(sorted(unknown))
+            )
+        domain_pack_id = payload.get("domain_pack_id")
+        if (
+            not isinstance(domain_pack_id, str)
+            or not domain_pack_id
+            or domain_pack_id != domain_pack_id.strip()
+        ):
+            raise ValidationError(
+                "domain_pack_id",
+                "must be a non-empty versioned identifier without surrounding whitespace",
+            )
+        runtime = self.server.domain_runtime(domain_pack_id)
+        if runtime.data_ports is None:
+            raise RetailDataPortError("bridge_data_ports_unavailable")
+        port_payload = {request_field: payload.get(request_field)}
+        if path == "/v1/reviews/query":
+            result = runtime.data_ports.reviews.get(port_payload)
+        else:
+            result = runtime.data_ports.pricing.quote(port_payload)
+        self._send(HTTPStatus.OK, self._bridge_response(result))
+        return True
 
     def _readiness(self) -> dict:
         def fallback_source(
@@ -271,6 +383,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if self._handle_bridge_get(path):
+            return
         if path == "/api/v2/domain-packs":
             self._send(
                 HTTPStatus.OK,
@@ -315,6 +429,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self._json_body()
             path = urlparse(self.path).path
+            if not isinstance(payload, dict):
+                raise ValidationError("request", "must be an object")
+            if self._handle_bridge_post(path, payload):
+                return
             if path == "/api/agent":
                 allowed = {"session_id", "user_id", "message", "confirmed"}
                 unknown = set(payload) - allowed
@@ -471,6 +589,20 @@ def build_server(
         domain_runtimes[pack.pack_id] = DomainRuntime(
             pack, discovery, decision, data_ports
         )
+    bridge_flag = os.environ.get("MOYUAN_RETAIL_BRIDGE_ENABLED", "false").strip().lower()
+    if bridge_flag not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+        raise ValueError("MOYUAN_RETAIL_BRIDGE_ENABLED must be a boolean")
+    retail_bridge_enabled = bridge_flag in {"true", "1", "yes", "on"}
+    retail_bridge_api_key = os.environ.get("MOYUAN_RETAIL_BRIDGE_KEY", "")
+    if retail_bridge_enabled and not retail_bridge_api_key:
+        raise ValueError("enabled retail bridge requires MOYUAN_RETAIL_BRIDGE_KEY")
+    if (
+        chr(13) in retail_bridge_api_key
+        or chr(10) in retail_bridge_api_key
+        or len(retail_bridge_api_key) > 4096
+    ):
+        raise ValueError("retail bridge API key contains invalid characters")
+
     default_runtime = domain_runtimes[runtime_registry.default_pack_id]
     return MoyuanHTTPServer(
         (host, port),
@@ -481,6 +613,8 @@ def build_server(
         default_runtime.decision,
         runtime_registry,
         domain_runtimes,
+        retail_bridge_enabled,
+        retail_bridge_api_key,
     )
 
 

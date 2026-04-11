@@ -20,6 +20,15 @@ public class ApiExceptionHandler {
                 "message", error.getMessage()));
     }
 
+    @ExceptionHandler(RunService.RunCapacityException.class)
+    ResponseEntity<Map<String, Object>> runCapacity(RunService.RunCapacityException error) {
+        HttpStatus status = error.overloaded()
+                ? HttpStatus.SERVICE_UNAVAILABLE
+                : HttpStatus.TOO_MANY_REQUESTS;
+        return ResponseEntity.status(status).body(Map.of(
+                "error", error.code(),
+                "message", error.getMessage()));
+    }
     @ExceptionHandler(RunService.RunContractException.class)
     ResponseEntity<Map<String, Object>> runContract(RunService.RunContractException error) {
         HttpStatus status = error.code().equals("idempotency_key_reused")
