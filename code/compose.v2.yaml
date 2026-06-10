@@ -1,0 +1,52 @@
+name: moyuan-sar-agent-v2
+
+services:
+  discovery:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.discovery
+    environment:
+      SHOPREC_HOST: 0.0.0.0
+      SHOPREC_PORT: 18083
+      MOYUAN_AGENT_MODEL_MODE: replay
+    ports:
+      - "18083:18083"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18083/health/ready', timeout=1)"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.control-plane
+    depends_on:
+      discovery:
+        condition: service_healthy
+    environment:
+      MOYUAN_CONTROL_HOST: 0.0.0.0
+      MOYUAN_CONTROL_PORT: 19090
+      MOYUAN_DATABASE_PATH: /app/code/.runtime/commerce-agent.sqlite
+      MOYUAN_DISCOVERY_MODE: python
+      MOYUAN_DISCOVERY_BASE_URL: http://discovery:18083
+      MOYUAN_AGENT_MODEL_MODE: ${MOYUAN_AGENT_MODEL_MODE:-replay}
+      MOYUAN_MODELPORT_BASE_URL: ${MOYUAN_MODELPORT_BASE_URL:-http://host.docker.internal:38082}
+      MOYUAN_MODELPORT_API_KEY: ${MOYUAN_MODELPORT_API_KEY:-}
+      MOYUAN_MODELPORT_MODEL: ${MOYUAN_MODELPORT_MODEL:-moyuan-shoprec-agent}
+      MOYUAN_SECURE_COOKIE: ${MOYUAN_SECURE_COOKIE:-false}
+      MOYUAN_ENABLE_V1_API: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "19090:19090"
+    volumes:
+      - moyuan-runtime:/app/code/.runtime
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:19090/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  moyuan-runtime:

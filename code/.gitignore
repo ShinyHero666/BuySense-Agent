@@ -1,0 +1,9 @@
+.venv/
+.venv-linux/
+.lab-backup/
+.lab-backup.tmp.*
+.lab-restore.tmp.*
+__pycache__/
+*.pyc
+*.egg-info/
+.env

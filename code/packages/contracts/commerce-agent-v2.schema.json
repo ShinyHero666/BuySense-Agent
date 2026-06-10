@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moyuan.local/contracts/commerce-agent-v2.schema.json",
+  "title": "Moyuan SAR Agent V2",
+  "type": "object",
+  "$defs": {
+    "ConstraintSource": {
+      "type": "string",
+      "enum": ["explicit_user", "inferred_model", "catalog", "system"]
+    },
+    "ConstraintStrength": {
+      "type": "string",
+      "enum": ["hard", "soft"]
+    },
+    "ConstraintStatus": {
+      "type": "string",
+      "enum": ["active", "superseded", "conflicted"]
+    },
+    "RequirementConstraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["constraintId", "field", "value", "source", "strength", "confidence", "turnId", "status"],
+      "properties": {
+        "constraintId": {"type": "string"},
+        "field": {"type": "string"},
+        "value": {},
+        "source": {"$ref": "#/$defs/ConstraintSource"},
+        "strength": {"$ref": "#/$defs/ConstraintStrength"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "turnId": {"type": "string"},
+        "status": {"$ref": "#/$defs/ConstraintStatus"}
+      }
+    },
+    "RunStatus": {
+      "type": "string",
+      "enum": ["queued", "running", "completed", "failed", "cancelled"]
+    },
+    "RunEventType": {
+      "type": "string",
+      "enum": ["run_created", "run_started", "task", "artifact", "model_execution", "policy_gate", "result", "run_failed", "run_cancelled"]
+    },
+    "IdentitySession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityId", "sessionId", "issuedAt", "expiresAt"],
+      "properties": {
+        "identityId": {"type": "string"},
+        "sessionId": {"type": "string"},
+        "issuedAt": {"type": "string", "format": "date-time"},
+        "expiresAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "AgentRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "identityId", "sessionId", "status", "message", "confirmed", "createdAt", "updatedAt", "cancelRequested"],
+      "properties": {
+        "runId": {"type": "string"},
+        "identityId": {"type": "string"},
+        "sessionId": {"type": "string"},
+        "status": {"$ref": "#/$defs/RunStatus"},
+        "message": {"type": "string"},
+        "confirmed": {"type": "boolean"},
+        "idempotencyKey": {"type": ["string", "null"]},
+        "result": {},
+        "errorCode": {"type": ["string", "null"]},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"},
+        "cancelRequested": {"type": "boolean"}
+      }
+    },
+    "AgentRunEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventId", "runId", "sequence", "eventType", "timestamp", "schemaVersion", "payload"],
+      "properties": {
+        "eventId": {"type": "string"},
+        "runId": {"type": "string"},
+        "taskId": {"type": ["string", "null"]},
+        "parentTaskId": {"type": ["string", "null"]},
+        "sequence": {"type": "integer", "minimum": 1},
+        "eventType": {"$ref": "#/$defs/RunEventType"},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "schemaVersion": {"type": "string", "const": "2.0"},
+        "payload": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "CreateRunRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "message": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "confirmed": {"type": "boolean", "default": false}
+      }
+    },
+    "CreateRunResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "status", "eventsUrl", "runUrl"],
+      "properties": {
+        "runId": {"type": "string"},
+        "status": {"$ref": "#/$defs/RunStatus"},
+        "eventsUrl": {"type": "string"},
+        "runUrl": {"type": "string"}
+      }
+    },
+    "WireProductCategory": {
+      "type": "string",
+      "enum": ["phone", "headphones", "charger", "cable", "case"]
+    },
+    "WireRetrievalChannel": {
+      "type": "string",
+      "enum": ["search", "recommendation", "ads"]
+    },
+    "DiscoveryWireRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query", "requested_categories", "use_cases", "preferred_brands", "primary_product_ids", "limit", "sponsored_allowed", "personalization_enabled"],
+      "properties": {
+        "query": {"type": "string"},
+        "requested_categories": {"type": "array", "items": {"$ref": "#/$defs/WireProductCategory"}},
+        "use_cases": {"type": "array", "items": {"type": "string"}},
+        "preferred_brands": {"type": "array", "items": {"type": "string"}},
+        "primary_product_ids": {"type": "array", "items": {"type": "string"}},
+        "max_price": {"type": ["number", "null"]},
+        "limit": {"type": "integer"},
+        "sponsored_allowed": {"type": "boolean"},
+        "identity_id": {"type": "string"},
+        "session_id": {"type": "string"},
+        "personalization_enabled": {"type": "boolean"},
+        "recent_product_ids": {"type": "array", "items": {"type": "string"}},
+        "excluded_product_ids": {"type": "array", "items": {"type": "string"}},
+        "ad_exposure_product_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "CandidateWireRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["spu_id", "product_id", "sku_id", "offer_id", "title", "category", "brand", "price", "currency", "stock", "channel", "channel_score", "normalized_score", "reasons", "sponsored"],
+      "properties": {
+        "spu_id": {"type": "string"},
+        "product_id": {"type": "string"},
+        "sku_id": {"type": "string"},
+        "offer_id": {"type": "string"},
+        "title": {"type": "string"},
+        "category": {"$ref": "#/$defs/WireProductCategory"},
+        "brand": {"type": "string"},
+        "price": {"type": "number"},
+        "currency": {"type": "string", "const": "CNY"},
+        "stock": {"type": "integer"},
+        "channel": {"$ref": "#/$defs/WireRetrievalChannel"},
+        "channel_score": {"type": "number"},
+        "normalized_score": {"type": "number"},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "sponsored": {"type": "boolean"}
+      }
+    },
+    "FusionWireRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channels", "limit"],
+      "properties": {
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["channel", "items"],
+            "properties": {
+              "channel": {"$ref": "#/$defs/WireRetrievalChannel"},
+              "items": {"type": "array", "items": {"$ref": "#/$defs/CandidateWireRecord"}}
+            }
+          }
+        },
+        "limit": {"type": "integer"}
+      }
+    },
+    "BundleOptimizationWireRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "requested_categories", "intent", "top_n"],
+      "properties": {
+        "items": {"type": "array", "items": {"$ref": "#/$defs/CandidateWireRecord"}},
+        "requested_categories": {"type": "array", "items": {"$ref": "#/$defs/WireProductCategory"}},
+        "intent": {"type": "string", "enum": ["precise", "catalog", "exploratory", "bundle", "compare"]},
+        "budget_max": {"type": ["number", "null"]},
+        "top_n": {"type": "integer"}
+      }
+    }
+  }
+}

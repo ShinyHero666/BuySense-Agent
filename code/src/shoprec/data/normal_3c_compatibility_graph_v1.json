@@ -1,0 +1,21 @@
+{
+  "graph_version": "compatibility-graph-v1",
+  "generated_at": "2026-08-01T00:00:00Z",
+  "relations": ["HAS_CONNECTOR", "SUPPORTS_PROTOCOL", "COMPATIBLE_WITH"],
+  "rules": [
+    {
+      "rule_id": "phone-headphones-bluetooth-v1",
+      "primary_category": "phone",
+      "accessory_category": "headphones",
+      "required_shared_connectors": ["bluetooth"],
+      "required_shared_protocols": []
+    },
+    {
+      "rule_id": "phone-charger-usbc-pd-v1",
+      "primary_category": "phone",
+      "accessory_category": "charger",
+      "required_shared_connectors": ["usb-c"],
+      "required_shared_protocols": ["usb-pd", "pps", "xiaomi-fast-charge"]
+    }
+  ]
+}

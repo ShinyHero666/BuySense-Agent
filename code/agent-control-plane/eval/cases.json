@@ -1,0 +1,137 @@
+[
+  {
+    "caseId": "bundle-full-7000",
+    "message": "总预算7000元，重视拍照和续航，帮我选手机并搭配降噪耳机和充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": 7000,
+    "expectApproved": true,
+    "expectedCategories": ["phone", "headphones", "charger"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "bundle-no-ads-6500",
+    "message": "预算6500元，不要广告，帮我选拍照手机并搭配耳机和充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": 6500,
+    "expectApproved": true,
+    "expectedCategories": ["phone", "headphones", "charger"],
+    "sponsoredAllowed": false
+  },
+  {
+    "caseId": "phone-charger-5000",
+    "message": "预算5000元，帮我选手机搭配充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": 5000,
+    "expectApproved": true,
+    "expectedCategories": ["phone", "charger"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "phone-only-6000",
+    "message": "预算6000元，帮我选拍照手机",
+    "expectedIntent": "exploratory",
+    "expectedBudgetMax": 6000,
+    "expectApproved": true,
+    "expectedCategories": ["phone"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "headphones-only-1000",
+    "message": "预算1000元，帮我选通勤降噪耳机",
+    "expectedIntent": "exploratory",
+    "expectedBudgetMax": 1000,
+    "expectApproved": true,
+    "expectedCategories": ["headphones"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "charger-only-500",
+    "message": "预算500元，帮我选便携充电器",
+    "expectedIntent": "exploratory",
+    "expectedBudgetMax": 500,
+    "expectApproved": true,
+    "expectedCategories": ["charger"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "bundle-minimum-feasible-3500",
+    "message": "总预算3500元，帮我选手机并搭配耳机和充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": 3500,
+    "expectApproved": true,
+    "expectedCategories": ["phone", "headphones", "charger"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "bundle-budget-too-low-3400",
+    "message": "总预算3400元，帮我选手机并搭配耳机和充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": 3400,
+    "expectApproved": false,
+    "expectedCategories": ["phone", "headphones", "charger"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "phone-zero-result-2500",
+    "message": "预算2500元，帮我选手机",
+    "expectedIntent": "exploratory",
+    "expectedBudgetMax": 2500,
+    "expectApproved": false,
+    "expectedCategories": ["phone"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "headphones-zero-result-400",
+    "message": "预算400元，帮我选降噪耳机",
+    "expectedIntent": "exploratory",
+    "expectedBudgetMax": 400,
+    "expectApproved": false,
+    "expectedCategories": ["headphones"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "apple-phone-preference",
+    "message": "预算7000元，帮我选苹果拍照手机",
+    "expectedIntent": "exploratory",
+    "expectedBudgetMax": 7000,
+    "expectApproved": true,
+    "expectedCategories": ["phone"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "xiaomi-phone-charger",
+    "message": "预算5000元，帮我选小米手机搭配快充充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": 5000,
+    "expectApproved": true,
+    "expectedCategories": ["phone", "charger"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "partial-bundle-no-ads",
+    "message": "预算5000元，不看广告，手机搭配充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": 5000,
+    "expectApproved": true,
+    "expectedCategories": ["phone", "charger"],
+    "sponsoredAllowed": false
+  },
+  {
+    "caseId": "compare-phone-only",
+    "message": "预算7000元，比较几款手机",
+    "expectedIntent": "compare",
+    "expectedBudgetMax": 7000,
+    "expectApproved": true,
+    "expectedCategories": ["phone"],
+    "sponsoredAllowed": true
+  },
+  {
+    "caseId": "bundle-without-budget",
+    "message": "帮我选一套拍照手机、降噪耳机和充电器",
+    "expectedIntent": "bundle",
+    "expectedBudgetMax": null,
+    "expectApproved": true,
+    "expectedCategories": ["phone", "headphones", "charger"],
+    "sponsoredAllowed": true
+  }
+]

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>墨圆电商搜推 Agent Lab</title>
+  <style>
+    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; background:#f4f1ea; color:#191919 }
+    body { max-width:920px; margin:0 auto; padding:32px 18px 80px }
+    header { display:flex; justify-content:space-between; gap:24px; align-items:end; margin-bottom:22px }
+    h1 { font-size:clamp(28px,5vw,48px); margin:0; letter-spacing:-1.5px }
+    .tag { background:#171717; color:white; padding:7px 11px; border-radius:999px; white-space:nowrap }
+    .note { color:#645f56; line-height:1.6 }
+    #log { min-height:300px; display:grid; gap:12px; margin:24px 0 }
+    .message { max-width:78%; padding:14px 16px; border-radius:18px; white-space:pre-wrap; line-height:1.55; box-shadow:0 4px 20px #25201710 }
+    .user { justify-self:end; background:#dfff65; border-bottom-right-radius:4px }
+    .agent { justify-self:start; background:white; border-bottom-left-radius:4px }
+    form { position:sticky; bottom:16px; display:flex; gap:10px; padding:10px; background:#ffffffd9; backdrop-filter:blur(12px); border:1px solid #ddd5c8; border-radius:18px }
+    input { min-width:0; flex:1; font:inherit; padding:13px 14px; border:0; outline:0; background:transparent }
+    button { border:0; border-radius:12px; background:#171717; color:white; font:inherit; padding:12px 18px; cursor:pointer }
+    details { background:#ebe5da; border-radius:12px; padding:10px 14px; font-size:13px }
+    pre { overflow:auto; white-space:pre-wrap }
+  </style>
+</head>
+<body>
+  <header><div><div class="note">墨圆电商平台 · 教学品牌</div><h1>搜推 Agent Lab</h1></div><span class="tag">Replay 默认</span></header>
+  <p class="note">真实闭环：澄清需求 → 搜索/推荐 → 有证据的比较 → 明确确认 → 保存清单。目录和策略均为合成教学数据，不会下单或支付。</p>
+  <div id="log"><div class="message agent">告诉我你的 iPhone 预算和必要条件。例如：预算不超过 3500 元，128G 以上，电池至少 86，必须质保，不接受维修。</div></div>
+  <details><summary>最后一次结构化响应与 trace</summary><pre id="trace">尚未调用</pre></details>
+  <form id="form"><input id="input" autocomplete="off" placeholder="输入购买需求…"><button>发送</button></form>
+  <script>
+    const sessionId = crypto.randomUUID();
+    const log = document.querySelector('#log');
+    const input = document.querySelector('#input');
+    const trace = document.querySelector('#trace');
+    const add = (text, role) => { const node=document.createElement('div'); node.className=`message ${role}`; node.textContent=text; log.append(node); node.scrollIntoView({behavior:'smooth'}); };
+    document.querySelector('#form').addEventListener('submit', async event => {
+      event.preventDefault(); const message=input.value.trim(); if(!message) return;
+      add(message,'user'); input.value=''; input.disabled=true;
+      try {
+        const response=await fetch('/api/agent',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({session_id:sessionId,user_id:'u001',message})});
+        const data=await response.json(); add(data.message || data.error || '请求失败','agent'); trace.textContent=JSON.stringify(data,null,2);
+      } catch(error) { add(`网络错误：${error.message}`,'agent'); }
+      finally { input.disabled=false; input.focus(); }
+    });
+  </script>
+</body>
+</html>

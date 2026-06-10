@@ -1,0 +1,31 @@
+{
+  "name": "recommend-pipeline",
+  "steps": [
+    {
+      "name": "full-ten-stage-pipeline",
+      "action": "recommend",
+      "payload": {
+        "user_id": "u001",
+        "size": 8,
+        "exclude_seen": false
+      },
+      "expect": {
+        "item_ids_excludes": ["p002", "p011", "p016"],
+        "min_items": 6,
+        "trace_stages": [
+          "QUERY",
+          "RECALL",
+          "FILTER",
+          "FEATURE",
+          "ROUGHRANK",
+          "FLOWPOOL",
+          "RANK",
+          "MODEL_RERANK",
+          "RULE_RERANK",
+          "RESULT"
+        ]
+      }
+    }
+  ]
+}
+

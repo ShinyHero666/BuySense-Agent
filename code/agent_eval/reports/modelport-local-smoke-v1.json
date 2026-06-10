@@ -1,0 +1,26 @@
+{
+  "agent": {
+    "arguments_normalized_by_policy": true,
+    "candidate_count": 3,
+    "latency_ms": 2249.958,
+    "model_degraded": false,
+    "routing_decision_id": "rtd_a3ba2ef4a5774011bce94468ee0cf837",
+    "routing_mode": "static",
+    "tool": "search_products",
+    "usage": {
+      "completion_tokens": 100,
+      "prompt_tokens": 610,
+      "prompt_tokens_details": {
+        "cached_tokens": 606
+      },
+      "total_tokens": 710
+    }
+  },
+  "passed": true,
+  "preflight": {
+    "model": "moyuan-shoprec-agent",
+    "model_visible": true,
+    "ready": true
+  },
+  "suite": "moyuan-modelport-local-smoke-v1"
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@moyuan/sar-agent-control-plane",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "demo": "tsx src/demo.ts",
+    "demo:cart": "tsx src/cart-demo.ts",
+    "eval": "tsx src/eval.ts",
+    "modelport:e2e": "tsx src/modelport-e2e.ts",
+    "server": "tsx src/server.ts",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
+    "typebox": "1.3.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "tsx": "4.20.5",
+    "typescript": "7.0.2"
+  }
+}

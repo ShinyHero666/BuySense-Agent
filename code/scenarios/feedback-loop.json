@@ -1,0 +1,43 @@
+{
+  "name": "feedback-loop",
+  "steps": [
+    {
+      "name": "first-page",
+      "action": "recommend",
+      "payload": {
+        "user_id": "u001",
+        "size": 5,
+        "exclude_seen": true
+      },
+      "expect": {
+        "min_items": 5
+      }
+    },
+    {
+      "name": "record-photography-click",
+      "action": "event",
+      "payload": {
+        "user_id": "u001",
+        "product_id": "p010",
+        "event_type": "click",
+        "scene": "homepage"
+      },
+      "expect": {
+        "accepted": true
+      }
+    },
+    {
+      "name": "second-page-after-feedback",
+      "action": "recommend",
+      "payload": {
+        "user_id": "u001",
+        "size": 5,
+        "exclude_seen": true
+      },
+      "expect": {
+        "min_items": 3
+      }
+    }
+  ]
+}
+

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moyuan-sar-legacy-lab"
+version = "1.0.0"
+description = "Legacy Linux-first search, recommendation, and agent lab for Moyuan SAR Agent"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+shoprec = "shoprec.cli:main"
+shoprec-server = "shoprec.server:main"
+moyuan = "shoprec.cli:main"
+moyuan-server = "shoprec.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+shoprec = ["default_experiments.json", "data/*.json", "data/*.jsonl", "static/*.html"]

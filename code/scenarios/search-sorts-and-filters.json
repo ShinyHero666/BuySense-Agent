@@ -1,0 +1,82 @@
+{
+  "name": "search-sorts-and-filters",
+  "steps": [
+    {
+      "name": "price-descending",
+      "action": "search",
+      "payload": {
+        "query": "iphone",
+        "sort": "price_desc",
+        "page_size": 8,
+        "filters": {
+          "max_price": 7000
+        }
+      },
+      "expect": {
+        "sorted_by": {
+          "field": "price",
+          "order": "desc"
+        },
+        "filter_reasons_contains": {
+          "out_of_stock": 1
+        }
+      }
+    },
+    {
+      "name": "newest-first",
+      "action": "search",
+      "payload": {
+        "query": "相机",
+        "sort": "newest",
+        "page_size": 8
+      },
+      "expect": {
+        "query_broad": true,
+        "sorted_by": {
+          "field": "publish_time",
+          "order": "desc"
+        }
+      }
+    },
+    {
+      "name": "city-filter",
+      "action": "search",
+      "payload": {
+        "query": "电脑",
+        "page_size": 8,
+        "filters": {
+          "city": "上海"
+        }
+      },
+      "expect": {
+        "min_items": 1,
+        "all_items_match": {
+          "city": "上海"
+        },
+        "filter_reasons_contains": {
+          "city_mismatch": 1
+        }
+      }
+    },
+    {
+      "name": "brand-filter",
+      "action": "search",
+      "payload": {
+        "query": "手机",
+        "page_size": 8,
+        "filters": {
+          "brands": ["Apple"]
+        }
+      },
+      "expect": {
+        "min_items": 2,
+        "all_items_match": {
+          "brand": "Apple"
+        },
+        "filter_reasons_contains": {
+          "brand_mismatch": 1
+        }
+      }
+    }
+  ]
+}
