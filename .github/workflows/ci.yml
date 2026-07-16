@@ -1,0 +1,87 @@
+name: moyuan-sar-agent-quality-gates
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-minimum:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - name: Verify the declared minimum Python runtime
+        run: |
+          python -m venv code/.venv
+          code/.venv/bin/pip install -e code
+          code/.venv/bin/python code/packages/contracts/generate_contracts.py --check
+          PYTHONPATH=code/src:code code/.venv/bin/python -m unittest discover -s code/tests -v
+
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check repository and Docker build-context safety
+        run: bash code/scripts/check-repository-safety.sh
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            code/agent-control-plane/package-lock.json
+            code/apps/commerce-console/package-lock.json
+      - name: Install Python package
+        run: |
+          python -m venv code/.venv
+          code/.venv/bin/pip install -e code
+      - name: Install Node workspaces
+        run: |
+          npm --prefix code/agent-control-plane ci --ignore-scripts --no-audit --no-fund
+          npm --prefix code/apps/commerce-console ci --ignore-scripts --no-audit --no-fund
+      - name: Install browser for the student journey
+        run: |
+          cd code/apps/commerce-console
+          npx playwright install --with-deps chromium
+      - name: Check committed contract artifacts
+        run: code/.venv/bin/python code/packages/contracts/generate_contracts.py --check
+      - name: Run all deterministic gates
+        run: bash code/scripts/verify-vnext.sh
+      - name: Keep the legacy course compatible
+        run: bash code/scripts/verify.sh
+      - name: Reject generated artifact drift
+        run: |
+          git diff --exit-code -- \
+            code/agent-control-plane/src/generated/contracts-v2.ts \
+            code/apps/commerce-console/src/generated/contracts-v2.ts \
+            code/src/shoprec/generated_contracts_v2.py \
+            code/agent_eval/reports/offline-v1.json \
+            code/agent_eval/reports/offline-v1.md
+      - name: Build and smoke-test the V2 container topology
+        run: bash code/scripts/test-v2-containers.sh
+      - name: Upload quality-gate failure artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: quality-gate-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            code/agent_eval/reports/
+            code/data/v2/retrieval_report.json
+            code/apps/commerce-console/playwright-report/
+            code/apps/commerce-console/test-results/
+            code/test-results/

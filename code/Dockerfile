@@ -1,6 +1,10 @@
 FROM python:3.12-slim
 WORKDIR /app
-COPY . .
+# The Legacy service only needs its Python sources and runtime experiment
+# configuration. Keep course material, tests, local databases, and credentials
+# out of the final image even if the build context grows over time.
+COPY src ./src
+COPY config ./config
 RUN useradd --create-home --uid 10001 appuser
 USER appuser
 ENV PYTHONPATH=/app/src

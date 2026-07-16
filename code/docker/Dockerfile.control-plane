@@ -2,14 +2,20 @@ FROM node:22.19-bookworm-slim AS frontend-build
 WORKDIR /build/code/apps/commerce-console
 COPY apps/commerce-console/package.json apps/commerce-console/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY apps/commerce-console/ ./
+COPY apps/commerce-console/index.html \
+     apps/commerce-console/tsconfig.json \
+     apps/commerce-console/tsconfig.app.json \
+     apps/commerce-console/tsconfig.node.json \
+     apps/commerce-console/vite.config.ts ./
+COPY apps/commerce-console/src ./src
 RUN npm run build
 
 FROM node:22.19-bookworm-slim AS control-build
 WORKDIR /build/code/agent-control-plane
 COPY agent-control-plane/package.json agent-control-plane/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY agent-control-plane/ ./
+COPY agent-control-plane/tsconfig.json ./
+COPY agent-control-plane/src ./src
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
 FROM node:22.19-bookworm-slim
@@ -17,10 +23,14 @@ RUN useradd --create-home --uid 10001 appuser
 WORKDIR /app/code/agent-control-plane
 COPY --from=control-build /build/code/agent-control-plane/package.json ./package.json
 COPY --from=control-build /build/code/agent-control-plane/node_modules ./node_modules
-COPY --from=control-build /build/code/agent-control-plane/dist ./dist
+# Only server code is needed at runtime. The project compiler also emits test
+# files when they are present in a developer checkout; do not ship those files.
+COPY --from=control-build /build/code/agent-control-plane/dist/src ./dist/src
 COPY --from=frontend-build /build/code/apps/commerce-console/dist /app/code/apps/commerce-console/dist
 COPY data/v2/retrieval_report.json /app/code/data/v2/retrieval_report.json
-COPY src/shoprec/data/normal_3c_domain_v1.json /app/code/src/shoprec/data/normal_3c_domain_v1.json
+# Domain Packs are runtime extensions: manifests and their referenced assets
+# must travel together so a newly added pack does not require a Dockerfile edit.
+COPY src/shoprec/data/*.json /app/code/src/shoprec/data/
 
 RUN mkdir -p /app/code/.runtime && chown -R appuser:appuser /app/code/.runtime
 USER appuser

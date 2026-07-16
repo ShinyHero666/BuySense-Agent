@@ -29,12 +29,14 @@ echo "[e2e] Starting an isolated offline stack at $BASE_URL"
 setsid env \
   MOYUAN_CONTROL_PORT="$CONTROL_PORT" \
   MOYUAN_DATA_PORT="$DATA_PORT" \
+  MOYUAN_AGENT_MODEL_MODE=modelport \
+  MOYUAN_MODELPORT_API_KEY=must-not-be-used-by-offline-e2e \
   bash "$SCRIPT_DIR/run-sar-agent.sh" --offline >"$SERVER_LOG" 2>&1 &
 SERVER_PID="$!"
 
 ready=false
 for _ in $(seq 1 240); do
-  if curl --noproxy '*' -fsS --max-time 1 "$BASE_URL/health" >/dev/null 2>&1; then
+  if curl --noproxy '*' -fsS --max-time 1 "$BASE_URL/health/ready" >/dev/null 2>&1; then
     ready=true
     break
   fi
@@ -50,7 +52,7 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 
-echo "[e2e] Running the first-student browser journey"
+echo "[e2e] Running the engineering-workbench browser journeys"
 set +e
 (
   cd "$FRONTEND_ROOT"

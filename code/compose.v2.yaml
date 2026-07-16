@@ -9,6 +9,11 @@ services:
       SHOPREC_HOST: 0.0.0.0
       SHOPREC_PORT: 18083
       MOYUAN_AGENT_MODEL_MODE: replay
+      # The base Compose topology is an offline quality gate. Credentialed
+      # providers use run-sar-agent.sh, which can pass only the active provider.
+      MOYUAN_RETAIL_DATA_MODE: static
+      MOYUAN_RETAIL_DATA_PROVIDER: generic
+      MOYUAN_RETAIL_DATA_FALLBACK_ENABLED: "false"
     ports:
       - "18083:18083"
     healthcheck:
@@ -30,14 +35,9 @@ services:
       MOYUAN_DATABASE_PATH: /app/code/.runtime/commerce-agent.sqlite
       MOYUAN_DISCOVERY_MODE: python
       MOYUAN_DISCOVERY_BASE_URL: http://discovery:18083
-      MOYUAN_AGENT_MODEL_MODE: ${MOYUAN_AGENT_MODEL_MODE:-replay}
-      MOYUAN_MODELPORT_BASE_URL: ${MOYUAN_MODELPORT_BASE_URL:-http://host.docker.internal:38082}
-      MOYUAN_MODELPORT_API_KEY: ${MOYUAN_MODELPORT_API_KEY:-}
-      MOYUAN_MODELPORT_MODEL: ${MOYUAN_MODELPORT_MODEL:-moyuan-shoprec-agent}
+      MOYUAN_AGENT_MODEL_MODE: replay
       MOYUAN_SECURE_COOKIE: ${MOYUAN_SECURE_COOKIE:-false}
       MOYUAN_ENABLE_V1_API: "false"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "19090:19090"
     volumes:
