@@ -63,7 +63,7 @@ export function DecisionView(props: {
   return (
     <div className="page decision-page">
       <header className="page-head">
-        <div><p>MOYUAN CHOICE INTELLIGENCE / V2</p><h1>把一次搜索，变成可审计的购买决策。</h1></div>
+        <div><p>BUYSENSE DECISION INTELLIGENCE / V2</p><h1>把一次搜索，变成可审计的购买决策。</h1></div>
         <div className="north-star">
           <small><abbr title="QDSR：通过约束、证据和策略门禁的方案数 ÷ 购买意图会话数；确认和草案成功率单独统计">QUALIFIED DECISION SUCCESS</abbr></small>
           <strong>{hasNorthStar ? Math.round((props.metrics?.northStar.value ?? 0) * 100) : "—"}{hasNorthStar && <em>%</em>}</strong>
